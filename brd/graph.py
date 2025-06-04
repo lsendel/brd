@@ -10,23 +10,118 @@ from brd.agent import (
 )
 
 # --- State Definition ---
-class AgentState(TypedDict):
-    userInput: str
-    messages: Annotated[List[BaseMessage], operator.add]
-    current_brd_content: str
-    clarification_questions_needed: bool
-    clarification_questions: List[str]
-    current_understanding: str # Accumulated understanding of the project
-    max_clarification_rounds: int
-    current_clarification_round: int
-    clarification_questions_pending_answer: bool # Flag to indicate if graph expects answers
-    route_condition: str # Holds the decision from routing nodes
-    # TODO: Add 'clarification_answers: List[str]' or similar
+class AgentState:
+    def __init__(
+        self,
+        userInput: str,
+        messages: Optional[List[BaseMessage]] = None,
+        current_brd_content: str = "",
+        clarification_questions_needed: bool = False,
+        clarification_questions: Optional[List[str]] = None,
+        current_understanding: str = "",
+        max_clarification_rounds: int = 3,
+        current_clarification_round: int = 0,
+        clarification_questions_pending_answer: bool = False,
+        route_condition: str = "",
+        thread_id: Optional[str] = None  # Added thread_id
+    ):
+        self.userInput: str = userInput
+        self.messages: List[BaseMessage] = messages if messages is not None else []
+        self.current_brd_content: str = current_brd_content
+        self.clarification_questions_needed: bool = clarification_questions_needed
+        self.clarification_questions: List[str] = clarification_questions if clarification_questions is not None else []
+        self.current_understanding: str = current_understanding if current_understanding else userInput
+        self.max_clarification_rounds: int = max_clarification_rounds
+        self.current_clarification_round: int = current_clarification_round
+        self.clarification_questions_pending_answer: bool = clarification_questions_pending_answer
+        self.route_condition: str = route_condition
+        self.thread_id: Optional[str] = thread_id # Added thread_id
 
-    # Potential future fields:
-    # analysis_results: dict
-    # confidence_score: float # For overall confidence in the generated BRD
-    # current_processing_stage: str # To track which major phase the agent is in
+        # operator.add behavior for messages will be handled by add_message method
+        # The graph's state mechanism will use this method if we define 'messages'
+        # in a way that Annotated[List[BaseMessage], operator.add] would have worked.
+        # For LangGraph to use operator.add, 'messages' needs to be accessible for it to work on.
+        # We will ensure our add_message method is what LangGraph calls.
+        # For direct use with StateGraph, the annotation on the class itself is not standard.
+        # Instead, the `operator.add` is usually for specific fields when used with `with_types`.
+        # For now, we manage messages via methods. LangGraph's `StatefulGraph`
+        # can be configured to handle updates to fields like `messages` via `operator.add`
+        # if the field itself is directly exposed and mutated, or if we use tools/functions
+        # that return a partial state to be merged. With a class, direct attribute updates
+        # and method calls are more common.
+
+    def add_message(self, message: BaseMessage) -> None:
+        self.messages.append(message)
+
+    def set_route_condition(self, condition: str) -> None:
+        self.route_condition = condition
+
+    def set_brd_content(self, content: str) -> None:
+        self.current_brd_content = content
+
+    def set_clarification_needed(self, needed: bool) -> None:
+        self.clarification_questions_needed = needed
+
+    def set_clarification_questions(self, questions: List[str]) -> None:
+        self.clarification_questions = questions
+
+    def set_answers_pending(self, pending: bool) -> None:
+        self.clarification_questions_pending_answer = pending
+
+    def increment_clarification_round(self) -> None:
+        self.current_clarification_round += 1
+
+    def reset_clarification_round(self) -> None: # Added for completeness
+        self.current_clarification_round = 0
+
+    def update_understanding(self, understanding: str) -> None:
+        self.current_understanding = understanding
+
+    def get_last_message_content(self) -> Optional[str]: # Example helper
+        if not self.messages:
+            return None
+        return self.messages[-1].content
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Converts the AgentState instance to a dictionary for persistence."""
+        # Need to handle messages serialization if persistence expects dicts for messages.
+        # Assuming persistence layer's _message_to_dict will be used by save_project *after* this.
+        # This to_dict is primarily for the top-level AgentState attributes.
+        # However, save_project in persistence.py expects BaseMessage objects in the 'messages' list
+        # and then serializes them itself. So, self.messages can remain as list of BaseMessage objects.
+        return {
+            "userInput": self.userInput,
+            "messages": self.messages, # Keep as BaseMessage objects
+            "current_brd_content": self.current_brd_content,
+            "clarification_questions_needed": self.clarification_questions_needed,
+            "clarification_questions": self.clarification_questions,
+            "current_understanding": self.current_understanding,
+            "max_clarification_rounds": self.max_clarification_rounds,
+            "current_clarification_round": self.current_clarification_round,
+            "clarification_questions_pending_answer": self.clarification_questions_pending_answer,
+            "route_condition": self.route_condition,
+            "thread_id": self.thread_id,
+        }
+
+    # The Annotated[List[BaseMessage], operator.add] part from TypedDict
+    # suggests that 'messages' field is intended to be extendable by LangGraph.
+    # To achieve this with a class, LangGraph needs to know how to update 'messages'.
+    # This is typically done by returning a new AgentState or a dict that updates 'messages'.
+    # If using StateGraph(AgentState) where AgentState is a class, updates can be done by
+    # returning a dict from nodes: e.g. `return {"messages": new_messages_list}`.
+    # LangGraph then merges this. If `operator.add` is desired for a field,
+    # the graph must be defined such that it can apply this operator, usually when the
+    # state itself (or at least the field) is a dictionary or compatible structure.
+    # For a class, we'd typically return new instances or mutated instances.
+    # For now, the add_message method is for direct use. LangGraph's merging
+    # will handle list extension if nodes return `{"messages": [new_message]}` and the
+    # graph is set up to use `operator.add` for the `messages` key.
+    # Let's assume for now that nodes will return full or partial state dicts,
+    # and LangGraph's default merging strategy (or explicit field-level mergers) apply.
+    # If `Annotated` with `operator.add` is critical for graph compilation with a class,
+    # this might need specific handling in graph setup or node return values.
+    # For now, the class methods are for our use, and graph updates will be standard.
+
 
 # --- Node Functions ---
 
@@ -36,68 +131,71 @@ def start_node(state: AgentState) -> AgentState:
     - Captures the initial user input into the 'messages' list.
     - Initializes other relevant state fields.
     """
+    # Note: The `state` argument in node functions will be an instance of AgentState class.
+    # LangGraph will instantiate it based on the input dictionary for the first node,
+    # and subsequent nodes will receive the instance passed from the previous node.
+    # Modifications should be done using instance attributes and methods.
+    # Node functions should return a dictionary of the fields they've changed,
+    # or the modified state instance if LangGraph is configured for that (less common for StateGraph).
+    # For StateGraph, returning a dict of changed fields is standard, and LangGraph merges it.
+
     print("--- Executing Start Node ---")
-    if not state.get('messages'): # Initialize messages if it's not there
-        state['messages'] = []
+    # If messages is None (e.g. first time state is created from a dict without it),
+    # __init__ already ensures it's an empty list.
 
     # Ensure initial userInput is added as a HumanMessage
-    if state.get('userInput'):
-        # Avoid duplicating the input if the graph is re-invoked with the same initial state
-        if not state['messages'] or state['messages'][-1].content != state['userInput'] or not isinstance(state['messages'][-1], HumanMessage):
-            state['messages'].append(HumanMessage(content=state['userInput']))
+    if state.userInput:
+        if not state.messages or state.messages[-1].content != state.userInput or not isinstance(state.messages[-1], HumanMessage):
+            state.add_message(HumanMessage(content=state.userInput))
 
-    state['current_brd_content'] = ""
-    state['clarification_questions_needed'] = False
-    state['clarification_questions'] = []
-    # New fields for clarification loop
-    state['current_understanding'] = state.get('current_understanding', state.get('userInput', '')) # Prioritize existing understanding
-    # Max clarification rounds: Use value from input state if provided, otherwise default to 3.
-    state['max_clarification_rounds'] = state.get('max_clarification_rounds', 3)
-    state['current_clarification_round'] = state.get('current_clarification_round', 0)
-    state['clarification_questions_pending_answer'] = state.get('clarification_questions_pending_answer', False)
-    state['route_condition'] = "" # Initialize routing condition for this run
+    state.set_brd_content("")
+    state.set_clarification_needed(False)
+    state.set_clarification_questions([])
+    # current_understanding is set in __init__ based on userInput if not provided.
+    # max_clarification_rounds and current_clarification_round are set by __init__ defaults if not in input.
+    # clarification_questions_pending_answer is set by __init__ default.
+    state.set_route_condition("") # Initialize routing condition for this run
 
-    print(f"--- Start Node ---")
-    print(f"  Initial userInput: '{state.get('userInput', 'N/A')[:100]}...'")
-    print(f"  Initial current_understanding: '{state.get('current_understanding', 'N/A')[:100]}...'")
-    print(f"  Max clarification rounds: {state['max_clarification_rounds']}")
-    # print(f"  Initial messages count: {len(state.get('messages', []))}") # Less critical for node execution log
-    # if state.get('messages'):
-    #     for i, msg in enumerate(state['messages']):
-    #         print(f"    Msg {i}: Type: {type(msg).__name__}, Content: '{str(msg.content)[:100]}...'")
+    print(f"--- Start Node Initialized ---")
+    print(f"  Initial userInput: '{state.userInput[:100]}...'")
+    print(f"  Initial current_understanding: '{state.current_understanding[:100]}...'")
+    print(f"  Max clarification rounds: {state.max_clarification_rounds}")
+    # Return a dictionary of changed fields for LangGraph to merge
+    # However, since we are modifying the state instance directly,
+    # and if LangGraph passes this instance around, returning the instance might be okay.
+    # Standard practice with StateGraph is to return a dictionary of updates.
+    # For this refactoring, we'll assume direct state modification is visible to next node if not returning dict.
+    # Let's try returning the mutated state directly. LangGraph should handle it.
     return state
 
 
 def analyze_input_node(state: AgentState) -> AgentState:
     """
     Analyzes current understanding and latest user utterance to determine if clarification is needed.
-    Sets 'clarification_questions_needed', 'clarification_questions', and 'route_condition'.
+    Updates state attributes like clarification_questions_needed, clarification_questions, and route_condition.
     """
-    print(f"\n--- Executing Analyze Input Node (Round {state.get('current_clarification_round', 0)}) ---")
+    print(f"\n--- Executing Analyze Input Node (Round {state.current_clarification_round}) ---")
 
-    current_round = state.get('current_clarification_round', 0)
-    max_rounds = state.get('max_clarification_rounds', 3)
+    print(f"  Current round: {state.current_clarification_round}, Max rounds: {state.max_clarification_rounds}")
 
-    print(f"  Current round: {current_round}, Max rounds: {max_rounds}")
-
-    if current_round >= max_rounds:
+    if state.current_clarification_round >= state.max_clarification_rounds:
         print(f"  INFO: Clarification round limit reached. Proceeding to generation.")
-        state['clarification_questions_needed'] = False
-        state['clarification_questions'] = []
-        if not any("Clarification round limit reached" in msg.content for msg in state.get('messages', []) if isinstance(msg, AIMessage)):
-             state['messages'].append(AIMessage(content="Clarification round limit reached. Proceeding with BRD generation based on current understanding."))
-        state['route_condition'] = "proceed_to_generation"
+        state.set_clarification_needed(False)
+        state.set_clarification_questions([])
+        if not any("Clarification round limit reached" in msg.content for msg in state.messages if isinstance(msg, AIMessage)):
+             state.add_message(AIMessage(content="Clarification round limit reached. Proceeding with BRD generation based on current understanding."))
+        state.set_route_condition("proceed_to_generation")
         return state
 
-    summary_for_questions = state.get('current_understanding', '')
+    summary_for_questions = state.current_understanding
     latest_utterance = ""
 
-    if current_round == 0:
-        latest_utterance = state.get('userInput', '')
+    if state.current_clarification_round == 0:
+        latest_utterance = state.userInput
         print(f"  INFO: First round. Using initial userInput for questions: '{latest_utterance[:100]}...'")
     else:
-        if state.get('messages'):
-            for message in reversed(state['messages']):
+        if state.messages:
+            for message in reversed(state.messages):
                 if isinstance(message, HumanMessage):
                     latest_utterance = message.content
                     print(f"  INFO: Subsequent round. Using last HumanMessage (answers) for questions: '{latest_utterance[:100]}...'")
@@ -106,12 +204,12 @@ def analyze_input_node(state: AgentState) -> AgentState:
              print("  WARNING: No distinct latest user utterance (HumanMessage) for clarification analysis after round 0. Using current_understanding.")
              latest_utterance = summary_for_questions
 
-    if not summary_for_questions and not latest_utterance: # Should be rare if userInput is captured
+    if not summary_for_questions and not latest_utterance:
         print("  ERROR: Both current_understanding and latest_utterance are empty. Cannot generate questions.")
-        state['clarification_questions_needed'] = False
-        state['clarification_questions'] = []
-        state['messages'].append(AIMessage(content="INTERNAL ERROR: Missing context to formulate clarification questions."))
-        state['route_condition'] = "end_due_to_error"
+        state.set_clarification_needed(False)
+        state.set_clarification_questions([])
+        state.add_message(AIMessage(content="INTERNAL ERROR: Missing context to formulate clarification questions."))
+        state.set_route_condition("end_due_to_error")
         return state
 
     print(f"  INFO: Calling agent to get clarification questions...")
@@ -124,20 +222,20 @@ def analyze_input_node(state: AgentState) -> AgentState:
     if questions and any(q.startswith("LLM_") or q.startswith("UNEXPECTED_") or q.startswith("Unparsed response") for q in questions):
         error_detail = questions[0] if questions else "Unknown agent error."
         print(f"  ERROR: Agent returned an error instead of questions: {error_detail}")
-        state['messages'].append(AIMessage(content=f"Agent Error: Could not retrieve clarification questions. Details: {error_detail}"))
-        state['clarification_questions_needed'] = False
-        state['clarification_questions'] = []
-        state['route_condition'] = "proceed_to_generation" # Proceed, BRD might reflect this error state
+        state.add_message(AIMessage(content=f"Agent Error: Could not retrieve clarification questions. Details: {error_detail}"))
+        state.set_clarification_needed(False)
+        state.set_clarification_questions([])
+        state.set_route_condition("proceed_to_generation") # Proceed, BRD might reflect this error state
     elif questions:
         print(f"  INFO: Clarification questions generated: {questions}")
-        state['clarification_questions_needed'] = True
-        state['clarification_questions'] = questions
-        state['route_condition'] = "ask_clarification"
+        state.set_clarification_needed(True)
+        state.set_clarification_questions(questions)
+        state.set_route_condition("ask_clarification")
     else:
         print("  INFO: No clarification questions needed or returned by LLM.")
-        state['clarification_questions_needed'] = False
-        state['clarification_questions'] = []
-        state['route_condition'] = "proceed_to_generation"
+        state.set_clarification_needed(False)
+        state.set_clarification_questions([])
+        state.set_route_condition("proceed_to_generation")
     return state
 
 
@@ -148,20 +246,20 @@ def generate_brd_node(state: AgentState) -> AgentState:
     """
     print("\n--- Executing Generate BRD Node ---")
 
-    user_input_for_brd = state.get('current_understanding', state.get('userInput', ''))
+    user_input_for_brd = state.current_understanding if state.current_understanding else state.userInput
     if not user_input_for_brd:
         print("  WARNING: No input or understanding available for BRD generation. Using placeholder.")
         user_input_for_brd = "No specific input or understanding was available for BRD generation."
 
     print(f"  Input for BRD generation: '{user_input_for_brd[:100]}...'")
     brd_content = generate_initial_brd_sections(user_input_for_brd)
-    state["current_brd_content"] = brd_content
+    state.set_brd_content(brd_content)
 
     if "ERROR:" in brd_content or "Error:" in brd_content:
         print(f"  ERROR: Agent returned an error during BRD generation: {brd_content}")
-        state["messages"].append(AIMessage(content=f"Could not generate BRD. Details: {brd_content}"))
+        state.add_message(AIMessage(content=f"Could not generate BRD. Details: {brd_content}"))
     else:
-        state["messages"].append(AIMessage(content=f"Generated BRD (Partial):\n{brd_content}"))
+        state.add_message(AIMessage(content=f"Generated BRD (Partial):\n{brd_content}"))
     return state
 
 
@@ -170,23 +268,20 @@ def clarification_node(state: AgentState) -> AgentState:
     Presents clarification questions to the user or informs if errors occurred.
     Sets 'clarification_questions_pending_answer' to True if valid questions are asked.
     """
-    print(f"\n--- Executing Clarification Node (Round {state.get('current_clarification_round', 0)}) ---")
+    print(f"\n--- Executing Clarification Node (Round {state.current_clarification_round}) ---")
 
-    current_questions = state.get('clarification_questions', [])
-    if not current_questions: # Should be prevented by analyze_input_node's routing
+    current_questions = state.clarification_questions
+    if not current_questions:
         print("  WARNING: Clarification Node called but no questions in state. Proceeding.")
         ai_message = "I was about to ask for more details, but I don't have any specific questions right now. Let's continue."
-        if not any(msg.content == ai_message for msg in state.get('messages', [])): # Avoid duplicate messages
-            state['messages'].append(AIMessage(content=ai_message))
-        state['clarification_questions_pending_answer'] = False
+        if not any(msg.content == ai_message for msg in state.messages):
+            state.add_message(AIMessage(content=ai_message))
+        state.set_answers_pending(False)
         return state
 
-    # analyze_input_node is responsible for adding agent errors to messages.
-    # This node just checks if the questions are actual questions or error placeholders.
     if any(q.startswith("LLM_") or q.startswith("UNEXPECTED_") or q.startswith("Unparsed response") for q in current_questions):
         print(f"  INFO: Clarification questions list contains error/info messages from agent: {current_questions[0]}")
-        # Error message already added by analyze_input_node. Ensure we don't expect an answer.
-        state['clarification_questions_pending_answer'] = False
+        state.set_answers_pending(False)
         return state
 
     questions_formatted = "\n".join([f"{i+1}. {q}" for i, q in enumerate(current_questions)])
@@ -194,8 +289,8 @@ def clarification_node(state: AgentState) -> AgentState:
                        f"{questions_formatted}\nPlease provide your answers.")
 
     print(f"  Asking valid questions:\n{questions_formatted}")
-    state['messages'].append(AIMessage(content=message_to_user))
-    state['clarification_questions_pending_answer'] = True
+    state.add_message(AIMessage(content=message_to_user))
+    state.set_answers_pending(True)
     return state
 
 
@@ -205,54 +300,47 @@ def process_clarification_answers_node(state: AgentState) -> AgentState:
     Updates 'current_understanding', clears 'clarification_questions',
     and resets 'clarification_questions_pending_answer'.
     """
-    print(f"\n--- Executing Process Clarification Answers Node (Round {state.get('current_clarification_round', 0)}) ---")
+    print(f"\n--- Executing Process Clarification Answers Node (Round {state.current_clarification_round}) ---")
 
     user_answers_text = ""
-    if state.get('messages') and isinstance(state['messages'][-1], HumanMessage):
-        user_answers_text = state['messages'][-1].content
+    if state.messages and isinstance(state.messages[-1], HumanMessage):
+        user_answers_text = state.messages[-1].content
         print(f"  Found user answers: '{user_answers_text[:100]}...'")
     else:
         print("  ERROR: Last message is not HumanMessage or no messages found. Cannot process answers.")
-        state['messages'].append(AIMessage(content="It seems I was expecting your answers, but I couldn't find them. This might affect the BRD quality."))
-        state['current_clarification_round'] = state.get('current_clarification_round', 0) + 1 # Increment to avoid loop
-        state['clarification_questions_pending_answer'] = False
-        state['clarification_questions'] = []
-        state['route_condition'] = "analyze"
+        state.add_message(AIMessage(content="It seems I was expecting your answers, but I couldn't find them. This might affect the BRD quality."))
+        state.increment_clarification_round() # Increment to avoid loop
+        state.set_answers_pending(False)
+        state.set_clarification_questions([])
+        state.set_route_condition("analyze")
         return state
 
-    questions_that_were_asked = state.get('clarification_questions', [])
-    if not questions_that_were_asked: # Should ideally not happen if answers are present
-        print("  WARNING: No 'clarification_questions' in state to process answers against. Refining based on general input.")
-        current_sum = state.get('current_understanding', state.get('userInput',''))
-        new_understanding = refine_project_understanding(
-            current_summary=current_sum,
-            questions_asked=[], # No specific questions recorded for this refinement
-            user_answers=user_answers_text
-        )
-    else:
-        print(f"  Processing answers for questions: {questions_that_were_asked}")
-        new_understanding = refine_project_understanding(
-            current_summary=state['current_understanding'],
-            questions_asked=questions_that_were_asked,
-            user_answers=user_answers_text
-        )
+    questions_that_were_asked = state.clarification_questions # These should have been cleared before answers, but as fallback
+
+    current_summary_for_refinement = state.current_understanding if state.current_understanding else state.userInput
+
+    print(f"  Processing answers for questions: {questions_that_were_asked if questions_that_were_asked else 'N/A (should have been cleared)'}")
+    new_understanding = refine_project_understanding(
+        current_summary=current_summary_for_refinement,
+        questions_asked=questions_that_were_asked, # Pass the questions that were asked
+        user_answers=user_answers_text
+    )
 
     if "[LLM_" in new_understanding or "[UNEXPECTED_ERROR" in new_understanding:
         print(f"  ERROR: Refinement of understanding returned an error: {new_understanding}")
-        state['messages'].append(AIMessage(content=f"Agent Error: Could not refine project understanding. Details: {new_understanding}"))
-        # current_understanding remains the old one in this case
+        state.add_message(AIMessage(content=f"Agent Error: Could not refine project understanding. Details: {new_understanding}"))
     else:
-        print(f"  Old understanding: '{state['current_understanding'][:100]}...'")
-        state['current_understanding'] = new_understanding
-        print(f"  New understanding: '{state['current_understanding'][:100]}...'")
+        print(f"  Old understanding: '{state.current_understanding[:100]}...'")
+        state.update_understanding(new_understanding)
+        print(f"  New understanding: '{state.current_understanding[:100]}...'")
 
-    state['current_clarification_round'] = state.get('current_clarification_round', 0) + 1
-    print(f"  Incremented clarification round to: {state['current_clarification_round']}")
+    state.increment_clarification_round()
+    print(f"  Incremented clarification round to: {state.current_clarification_round}")
 
-    state['clarification_questions'] = []
-    state['clarification_questions_needed'] = False
-    state['clarification_questions_pending_answer'] = False
-    state['route_condition'] = "analyze"
+    state.set_clarification_questions([]) # Clear questions after processing
+    state.set_clarification_needed(False)
+    state.set_answers_pending(False)
+    state.set_route_condition("analyze")
     return state
 
 
@@ -262,21 +350,20 @@ def route_after_start_node(state: AgentState) -> AgentState:
     Updates 'route_condition' in the state: "process_answers" or "analyze".
     """
     print(f"\n--- Executing Route After Start Node ---")
-    pending_answers = state.get('clarification_questions_pending_answer', False)
-    # Check if the last message is Human AND there are messages.
-    last_message_is_human = bool(state.get('messages') and isinstance(state['messages'][-1], HumanMessage))
+    pending_answers = state.clarification_questions_pending_answer
+    last_message_is_human = bool(state.messages and isinstance(state.messages[-1], HumanMessage))
 
     print(f"  Pending answers flag: {pending_answers}, Last message is Human: {last_message_is_human}")
 
     if pending_answers and last_message_is_human:
         print("  DECISION: Answers were pending, and last message is Human. Routing to 'process_answers'.")
-        state['route_condition'] = "process_answers"
+        state.set_route_condition("process_answers")
     elif pending_answers and not last_message_is_human:
         print("  WARNING: Answers were pending, but last message is NOT Human. Routing to 'analyze' (may re-ask or end).")
-        state['route_condition'] = "analyze"
+        state.set_route_condition("analyze")
     else: # No answers pending
         print("  DECISION: No answers pending. Routing to 'analyze'.")
-        state['route_condition'] = "analyze"
+        state.set_route_condition("analyze")
     return state
 
 
@@ -286,7 +373,7 @@ def should_ask_for_clarification(state: AgentState) -> str:
     Possible outcomes: "ask_clarification", "proceed_to_generation", "end_due_to_error".
     """
     print(f"\n--- Conditional Edge: Evaluating 'route_condition' from analyze_input_node ---")
-    route = state.get('route_condition', 'proceed_to_generation') # Default robustly
+    route = state.route_condition
     print(f"  Route condition from state: '{route}'")
 
     if route == "ask_clarification":
@@ -295,7 +382,7 @@ def should_ask_for_clarification(state: AgentState) -> str:
     elif route == "end_due_to_error":
         print("  DECISION: Routing to END due to error in analyze_input_node.")
         return "end_due_to_error"
-    # Default to generation if condition is not explicitly 'ask_clarification' or 'end_due_to_error'
+
     print("  DECISION: Routing to 'generate_brd'.")
     return "proceed_to_generation"
 

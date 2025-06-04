@@ -3,9 +3,14 @@ import json # Added for parsing JSON in get_clarification_questions
 import re
 from typing import List
 
+import tenacity # Added for retries
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
+
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 # Specific OpenAI errors for more granular handling
+# Note: LangChain might also have its own versions of these, e.g., langchain_core.exceptions.RateLimitError
+# For now, sticking with the direct OpenAI ones as they are already imported and handled.
 from openai import APIError, RateLimitError, AuthenticationError, APITimeoutError, APIConnectionError
 
 from brd.prompts import (
@@ -40,6 +45,11 @@ else:
 # Note: Consider adding retry logic (e.g., using 'tenacity') for LLM calls
 #       in a production setting to handle transient network issues.
 
+@retry(
+    wait=wait_exponential(multiplier=1, min=2, max=60), # Exponential backoff starting at 2s, max 60s
+    stop=stop_after_attempt(5), # Retry up to 5 times
+    retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError, APIError)) # Retry on these specific OpenAI errors
+)
 def generate_initial_brd_sections(user_input: str) -> str:
     """
     Generates initial BRD sections based on user input.
@@ -115,6 +125,11 @@ If LLM were available, it would attempt to generate sections like:
         return f"Error: An unexpected issue ('{error_type}') occurred while generating BRD content. BRD generation could not be completed."
 
 
+@retry(
+    wait=wait_exponential(multiplier=1, min=2, max=60),
+    stop=stop_after_attempt(5),
+    retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError, APIError))
+)
 def get_clarification_questions(current_project_summary: str, latest_user_utterance: str) -> List[str]:
     """
     Analyzes the current project summary and latest user utterance to determine if clarification
@@ -215,6 +230,11 @@ def get_clarification_questions(current_project_summary: str, latest_user_uttera
         return [f"UNEXPECTED_ERROR: {error_type}. Could not get clarification questions."]
 
 
+@retry(
+    wait=wait_exponential(multiplier=1, min=2, max=60),
+    stop=stop_after_attempt(5),
+    retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError, APIError))
+)
 def refine_project_understanding(current_summary: str, questions_asked: List[str], user_answers: str) -> str:
     """
     Refines the project understanding by synthesizing the current summary, questions asked,

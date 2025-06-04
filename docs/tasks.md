@@ -4,16 +4,16 @@ This document lists actionable tasks to improve the StrataBRD Pro codebase, cove
 
 ## Error Handling & Robustness
 
-- [ ] **Enhance LLM Error Handling:** Implement more comprehensive error handling for LLM API calls in `brd/agent.py` (e.g., implement retry mechanisms with exponential backoff for transient errors like `RateLimitError`, `APITimeoutError`, `APIConnectionError`).
-- [ ] **User-Facing Error Messages:** Provide more specific and user-friendly error messages in the CLI when LLM calls fail or other critical errors occur.
-- [ ] **Input Validation (`main.py`):** Strengthen input validation in `main.py`, particularly for project names (e.g., disallow special characters that might cause issues with filenames, check for empty names more explicitly).
-- [ ] **Persistence Edge Cases:** Investigate and handle potential edge cases in `brd/persistence.py` (e.g., disk full scenarios, permissions issues during file I/O).
-- [ ] **Graceful Degradation:** If the LLM is unavailable (e.g., API key missing, network issues), ensure the application degrades gracefully, perhaps offering to work in an offline mode if feasible for certain features, or providing very clear guidance.
+- [x] **Enhance LLM Error Handling:** Implement more comprehensive error handling for LLM API calls in `brd/agent.py` (e.g., implement retry mechanisms with exponential backoff for transient errors like `RateLimitError`, `APITimeoutError`, `APIConnectionError`).
+- [x] **User-Facing Error Messages:** Provide more specific and user-friendly error messages in the CLI when LLM calls fail or other critical errors occur.
+- [x] **Input Validation (`main.py`):** Strengthen input validation in `main.py`, particularly for project names (e.g., disallow special characters that might cause issues with filenames, check for empty names more explicitly).
+- [x] **Persistence Edge Cases:** Investigate and handle potential edge cases in `brd/persistence.py` (e.g., disk full scenarios, permissions issues during file I/O).
+- [x] **Graceful Degradation:** If the LLM is unavailable (e.g., API key missing, network issues), ensure the application degrades gracefully, perhaps offering to work in an offline mode if feasible for certain features, or providing very clear guidance.
 
 ## Code Structure & Maintainability
 
-- [ ] **Refactor `main.py`:** Move project management functions (`handle_load_project`, `handle_new_project`) from `main.py` into a new module, e.g., `brd/project_manager.py`, to reduce `main.py`'s length and improve separation of concerns.
-- [ ] **`AgentState` as Class:** Consider converting the `AgentState` TypedDict in `brd/graph.py` into a class. This class could encapsulate state modification logic, potentially simplifying node functions and ensuring more controlled state transitions.
+- [x] **Refactor `main.py`:** Move project management functions (`handle_load_project`, `handle_new_project`) from `main.py` into a new module, e.g., `brd/project_manager.py`, to reduce `main.py`'s length and improve separation of concerns.
+- [x] **`AgentState` as Class:** Consider converting the `AgentState` TypedDict in `brd/graph.py` into a class. This class could encapsulate state modification logic, potentially simplifying node functions and ensuring more controlled state transitions.
 - [ ] **LLM Dependency Injection:** Refactor `brd/agent.py` to allow the LLM instance to be injected as a dependency. This would simplify testing (easier mocking) and improve flexibility if different LLM configurations are needed.
 - [ ] **Separate Test Logic:** Ensure all test-related logic and helper functions currently in `if __name__ == '__main__':` blocks within the main library code (e.g., `brd/agent.py`, `brd/graph.py`) are moved to the `tests/` directory.
 - [ ] **Prompt Management:** As the number of prompts in `brd/prompts.py` grows (especially with the 14 BRD sections), devise a more structured way to manage and select prompts, potentially using a prompt registry or template manager.
