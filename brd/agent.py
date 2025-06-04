@@ -1,25 +1,24 @@
 import os
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage, SystemMessage
+# Removed BaseLangChainError import
+# It's good practice to also be aware of specific OpenAI errors,
+# though LangChain might wrap them.
+from openai import APIError, RateLimitError, AuthenticationError, APITimeoutError, APIConnectionError
 
-from brd.prompts import STRATA_BRD_PRO_PERSONA
+
+from brd.prompts import STRATA_BRD_PRO_PERSONA, INITIAL_BRD_SECTIONS_TASK_TEMPLATE
 
 # Initialize the LLM
-# Ensure OPENAI_API_KEY is set in the environment
-# For local development, you can use a .env file and load it with python-dotenv
-# import dotenv
-# dotenv.load_dotenv()
-
-# Check if API key is available
 if not os.getenv("OPENAI_API_KEY"):
     print("Warning: OPENAI_API_KEY not found in environment. LLM calls will fail.")
-    # You might want to raise an error or handle this more gracefully
-    # For now, we'll let it proceed and potentially fail at LLM call time if not set.
 
+# TODO: Experiment with more advanced models (e.g., GPT-4) and temperature settings
+#       as the agent matures. Consider making these configurable.
 llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
-# Using gpt-3.5-turbo for now as it's faster and cheaper for development.
-# Can be upgraded to gpt-4 or others as specified in persona for production.
+
+# TODO: In a production setting, consider adding retry logic (e.g., using the 'tenacity' library)
+#       for LLM calls to handle transient network issues or temporary API unavailability.
 
 def generate_initial_brd_sections(user_input: str) -> str:
     """
@@ -28,101 +27,46 @@ def generate_initial_brd_sections(user_input: str) -> str:
     """
     print(f"--- Calling LLM for BRD Generation with input: {user_input[:100]}... ---")
 
-    # Construct the prompt for the LLM
-    # We are combining the system persona with a specific task for the user input.
-
-    generation_prompt_text = f"""
-{STRATA_BRD_PRO_PERSONA}
-
---------------------------------------------------
-USER'S INITIAL CONCEPT:
-{user_input}
---------------------------------------------------
-
-TASK:
-Based on the user's initial concept, please generate the following sections for a Business Requirements Document (BRD).
-Ensure you adhere to the OUTPUT STANDARDS defined in your persona, especially:
-- Use Markdown with proper heading hierarchy.
-- Number all requirements uniquely (e.g., FR-001 for Functional Requirements).
-- For Functional Requirements, provide a basic structure or a few examples if possible, based on the input.
-
-SECTIONS TO GENERATE:
-1.  **Executive Summary**
-    *   Business opportunity/problem (derived from input)
-    *   Proposed solution overview (derived from input)
-    *   Expected benefits (high-level, if inferable)
-
-2.  **Vision & Scope**
-    *   Product vision statement (derived from input)
-    *   In-scope features (high-level list based on input)
-    *   Out-of-scope items (make reasonable assumptions or state if unclear)
-
-3.  **Functional Requirements** (Provide a basic list of 2-3 user stories with acceptance criteria if the input allows, otherwise a placeholder structure)
-    *   Example:
-        *   **FR-001: [User Story Title]**
-            *   As a [type of user], I want [an action] so that [a benefit/value].
-            *   **Acceptance Criteria:**
-                *   Criterion 1.
-                *   Criterion 2.
-
-Remember to show your reasoning process transparently if assumptions are made.
-Output only the requested BRD sections in Markdown format.
-"""
-
     try:
-        # Using ChatPromptTemplate for more structured message handling
         prompt_template = ChatPromptTemplate.from_messages([
             ("system", STRATA_BRD_PRO_PERSONA),
-            ("human", f"""USER'S INITIAL CONCEPT:
-{user_input}
-
-TASK:
-Based on the user's initial concept, please generate the following sections for a Business Requirements Document (BRD).
-Ensure you adhere to the OUTPUT STANDARDS defined in your persona, especially:
-- Use Markdown with proper heading hierarchy.
-- Number all requirements uniquely (e.g., FR-001 for Functional Requirements).
-- For Functional Requirements, provide a basic structure or a few examples if possible, based on the input.
-
-SECTIONS TO GENERATE:
-1.  **Executive Summary**
-    *   Business opportunity/problem (derived from input)
-    *   Proposed solution overview (derived from input)
-    *   Expected benefits (high-level, if inferable)
-
-2.  **Vision & Scope**
-    *   Product vision statement (derived from input)
-    *   In-scope features (high-level list based on input)
-    *   Out-of-scope items (make reasonable assumptions or state if unclear)
-
-3.  **Functional Requirements** (Provide a basic list of 2-3 user stories with acceptance criteria if the input allows, otherwise a placeholder structure)
-    *   Example:
-        *   **FR-001: [User Story Title]**
-            *   As a [type of user], I want [an action] so that [a benefit/value].
-            *   **Acceptance Criteria:**
-                *   Criterion 1.
-                *   Criterion 2.
-
-Remember to show your reasoning process transparently if assumptions are made.
-Output only the requested BRD sections in Markdown format.
-""")
+            ("human", INITIAL_BRD_SECTIONS_TASK_TEMPLATE)
         ])
 
         chain = prompt_template | llm
-        response = chain.invoke({"user_input": user_input}) # Pass user_input if template uses it
+        response = chain.invoke({"user_input": user_input})
 
         generated_content = response.content
         print("--- LLM Response Received ---")
         return generated_content
+    # Specific OpenAI errors
+    except APIError as e: # Catching the base OpenAI error
+        error_type = type(e).__name__
+        print(f"OpenAI API Error during LLM call ({error_type}): {e}")
+
+        # Check for specific OpenAI error types
+        if isinstance(e, AuthenticationError):
+            return "Error: LLM authentication failed. Please check your API key."
+        elif isinstance(e, RateLimitError):
+            return "Error: LLM rate limit exceeded. Please try again later or check your plan."
+        elif isinstance(e, (APITimeoutError, APIConnectionError)):
+            return "Error: LLM connection issue. Please check your network or try again later."
+        else: # General APIError that isn't more specific from the ones above
+            return f"Error: An OpenAI API issue occurred while generating BRD content ({error_type})."
+    # Catch other potential errors that could be LangChain related or other unexpected issues
     except Exception as e:
-        print(f"Error during LLM call: {e}")
-        return "Error: Could not generate BRD content due to an LLM error."
+        error_type = type(e).__name__
+        # Check if it's an error from LangChain by looking for 'langchain' in module name, if possible
+        module = getattr(type(e), '__module__', '')
+        if 'langchain' in module:
+            print(f"LangChain related error during LLM call ({error_type}): {e}")
+            return f"Error: A LangChain operation failed while generating BRD content ({error_type})."
+        else:
+            print(f"An unexpected error occurred during LLM call ({error_type}): {e}")
+            return "Error: An unexpected issue occurred while generating BRD content."
 
 if __name__ == '__main__':
-    # This is for basic testing of the BRD generation function.
-    # Ensure OPENAI_API_KEY is set in your environment.
-    # Example: export OPENAI_API_KEY='your_key_here'
     print("Testing BRD generation function...")
-    # Load .env file if it exists, for local testing
     try:
         import dotenv
         dotenv.load_dotenv()
@@ -136,6 +80,14 @@ if __name__ == '__main__':
     if not os.getenv("OPENAI_API_KEY"):
         print("Skipping BRD generation test as OPENAI_API_KEY is not set.")
     else:
+        # Test specific error handling (conceptual, requires mocking to trigger)
+        # print("\nTesting error handling (conceptual):")
+        # try:
+        #    # Mock LLM to raise openai.AuthenticationError for example
+        #    pass
+        # except Exception as e:
+        #    print(f"Caught during test: {generate_initial_brd_sections('test error')}")
+
         sample_input = "Develop an AI-powered chatbot for customer service that can handle product returns and answer FAQs."
         brd_output = generate_initial_brd_sections(sample_input)
         print("\n--- Generated BRD Output ---")

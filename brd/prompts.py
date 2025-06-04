@@ -35,7 +35,7 @@ Every requirement MUST be:
 - **Unambiguous**: Single interpretation possible
 - **Testable**: Clear pass/fail criteria
 - **Traceable**: Linked to source and tests
-- **Prioritized**: Using MoSCoW (Must/Should/Could/Won't)
+- **Prioritized**: Using MoSCoW (Must/Should/Could/Won\'t)
 - **Atomic**: Cannot be decomposed further
 - **Consistent**: No conflicts with other requirements
 - **Complete**: All necessary information included
@@ -184,6 +184,40 @@ Every requirement MUST be:
 7. **Recommendation**: Suggest next steps and expert review areas
 
 Begin by analyzing the provided concept. If the input lacks critical details, ask up to 5 specific, targeted questions before proceeding. Show your reasoning process transparently.
+"""
+
+INITIAL_BRD_SECTIONS_TASK_TEMPLATE = """USER'S INITIAL CONCEPT:
+{user_input}
+--------------------------------------------------
+
+TASK:
+Based on the user's initial concept, please generate the following sections for a Business Requirements Document (BRD).
+Ensure you adhere to the OUTPUT STANDARDS defined in your persona, especially:
+- Use Markdown with proper heading hierarchy.
+- Number all requirements uniquely (e.g., FR-001 for Functional Requirements).
+- For Functional Requirements, provide a basic structure or a few examples if possible, based on the input.
+
+SECTIONS TO GENERATE:
+1.  **Executive Summary**
+    *   Business opportunity/problem (derived from input)
+    *   Proposed solution overview (derived from input)
+    *   Expected benefits (high-level, if inferable)
+
+2.  **Vision & Scope**
+    *   Product vision statement (derived from input)
+    *   In-scope features (high-level list based on input)
+    *   Out-of-scope items (make reasonable assumptions or state if unclear)
+
+3.  **Functional Requirements** (Provide a basic list of 2-3 user stories with acceptance criteria if the input allows, otherwise a placeholder structure)
+    *   Example:
+        *   **FR-001: [User Story Title]**
+            *   As a [type of user], I want [an action] so that [a benefit/value].
+            *   **Acceptance Criteria:**
+                *   Criterion 1.
+                *   Criterion 2.
+
+Remember to show your reasoning process transparently if assumptions are made.
+Output only the requested BRD sections in Markdown format.
 """
 
 # Placeholder for other prompts if needed in the future

@@ -3,104 +3,146 @@ import operator
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
-from brd.agent import generate_initial_brd_sections # Added import
+from brd.agent import generate_initial_brd_sections
 
 # --- State Definition ---
 class AgentState(TypedDict):
     userInput: str
     # The 'messages' field will store the conversation history.
-    # We'll use a HumanMessage for user input and AIMessage for agent responses.
+    # operator.add makes new messages append to the list.
     messages: Annotated[List[BaseMessage], operator.add]
     current_brd_content: str # To store the BRD content as it's generated
+
+    # Fields for clarification logic
     clarification_questions_needed: bool
     clarification_questions: List[str]
-    # Potentially add other fields later, like:
-    # analysis_results: dict
-    # confidence_score: float
+    # TODO: Add 'clarification_answers: List[str]' or similar when implementing the answer processing part of the loop.
+    #       Consider 'processed_answers: dict' if answers need to be structured.
+
+    # Potential future fields:
+    # analysis_results: dict  # To store structured output from analyze_input_node
+    # confidence_score: float # For overall confidence in the generated BRD
+    # current_processing_stage: str # To track which major phase the agent is in
 
 # --- Node Functions ---
-# These will be further developed in subsequent steps.
-# For now, they are placeholders or simple pass-throughs.
 
 def start_node(state: AgentState) -> AgentState:
-    # This node could eventually do more, like initializing things.
-    # For now, it just ensures the input is captured in messages.
+    """
+    Initializes the agent's state.
+    - Captures the initial user input into the 'messages' list.
+    - Initializes other relevant state fields.
+    """
     print("--- Executing Start Node ---")
-    # Add the user input as a HumanMessage to the messages list
-    # This assumes userInput is already populated in the initial state.
-    # If not, this node would be responsible for getting it.
     if not state.get('messages'): # Initialize messages if it's not there
         state['messages'] = []
 
+    # Ensure initial userInput is added as a HumanMessage
     if state.get('userInput'):
-         # Check if the last message is already this userInput to avoid duplicates on re-runs
-        if not state['messages'] or state['messages'][-1].content != state['userInput']:
+        # Avoid duplicating the input if the graph is re-invoked with the same initial state
+        if not state['messages'] or state['messages'][-1].content != state['userInput'] or not isinstance(state['messages'][-1], HumanMessage):
             state['messages'].append(HumanMessage(content=state['userInput']))
 
-    state['current_brd_content'] = "" # Initialize BRD content
-    state['clarification_questions_needed'] = False # Default
+    state['current_brd_content'] = ""
+    state['clarification_questions_needed'] = False
     state['clarification_questions'] = []
-    print(f"Initial state: {state}")
+    print(f"Initial state after start_node: {state}")
     return state
 
 def analyze_input_node(state: AgentState) -> AgentState:
-    # Placeholder for initial input analysis.
-    # In the future, this node will use an LLM to:
-    # 1. Parse user input, identify domain and complexity.
-    # 2. Determine if clarification questions are needed.
-    # For now, it will simulate this by defaulting to no clarification needed.
-    print("--- Executing Analyze Input Node ---")
+    """
+    Analyzes the initial user input (and potentially subsequent user messages).
 
-    # Simulate analysis: For now, assume no clarification is needed
-    state['clarification_questions_needed'] = False
+    Future Responsibilities:
+    - Use an LLM to parse the input, identify domain, estimate complexity.
+    - Determine if the input is sufficient or if clarification questions are necessary.
+    - If questions are needed:
+        - Formulate specific, targeted questions (3-5 as per persona).
+        - Set 'clarification_questions_needed' to True.
+        - Populate 'clarification_questions' list.
+        - Add an AIMessage to 'messages' indicating questions are being asked.
+    - Store structured analysis (e.g., domain, complexity, key entities) in 'analysis_results' (future state field).
+    """
+    print("--- Executing Analyze Input Node (Currently Placeholder) ---")
 
-    # If clarification were needed, this node would set:
-    # state['clarification_questions_needed'] = True
-    # state['clarification_questions'] = ["Question 1?", "Question 2?"]
-    # state['messages'].append(AIMessage(content="I have some clarifying questions: ..."))
+    # Simulate analysis: For now, assume no clarification is needed.
+    # To test the clarification path, this logic would need to be changed,
+    # e.g., by checking if input is very short or lacks detail.
+    # Example (conceptual):
+    # if len(state.get('userInput', '')) < 20: # Arbitrary short length
+    #     state['clarification_questions_needed'] = True
+    #     state['clarification_questions'] = [
+    #         "Could you please elaborate on the main objectives?",
+    #         "What are the key features you envision?"
+    #     ]
+    #     state['messages'].append(AIMessage(content="I have a couple of questions to better understand your needs."))
+    # else:
+    #     state['clarification_questions_needed'] = False
 
-    print(f"State after analysis: {state}")
+    state['clarification_questions_needed'] = False # Default for current simplified version
+
+    print(f"State after analyze_input_node: {state}")
     return state
 
-# Updated generate_brd_node
 def generate_brd_node(state: AgentState) -> AgentState:
-    print("--- Executing Generate BRD Node (Actual Implementation) ---")
+    """
+    Generates the BRD content using the agent's core logic.
+    This node is called when the input is deemed sufficient, either initially
+    or after a clarification cycle.
+    """
+    print("--- Executing Generate BRD Node ---")
+
+    # Determine the most relevant input for BRD generation.
+    # This could be the initial 'userInput' or a refined understanding after clarifications.
+    # For now, it uses the latest HumanMessage or the initial userInput.
     user_input_for_brd = state.get("userInput", "No input provided")
-    # If there are messages, try to get the latest human message for more context
     if state.get("messages"):
-        for msg in reversed(state.get("messages", [])): # Iterate in reverse to get the latest
+        for msg in reversed(state.get("messages", [])):
             if isinstance(msg, HumanMessage):
-                user_input_for_brd = msg.content
+                user_input_for_brd = msg.content # Use the latest human input
                 break
 
+    print(f"Input for BRD generation: {user_input_for_brd[:100]}...")
     brd_content = generate_initial_brd_sections(user_input_for_brd)
     state["current_brd_content"] = brd_content
-    # Ensure AIMessage is imported if not already
     state["messages"].append(AIMessage(content=f"Generated BRD (Partial):\n{brd_content}"))
-    print(f"State after BRD generation: {state}")
+    print(f"State after generate_brd_node: {state}")
     return state
 
 def clarification_node(state: AgentState) -> AgentState:
+    """
+    Formats and presents clarification questions to the user.
+    In a full loop, the graph would then wait for user's answers.
+    """
     print("--- Executing Clarification Node ---")
-    # This node would present questions and await user feedback.
-    # For this initial setup, we're not fully implementing the loop back for answers.
-    # It just acknowledges that clarification would happen here.
-    questions_formatted = "\n".join(state['clarification_questions'])
-    message_to_user = f"I need to understand your requirements better. Please answer the following:\n{questions_formatted}"
-    state['messages'].append(AIMessage(content=message_to_user))
-    # In a real scenario, the graph would wait for new HumanMessage with answers.
-    print(f"State after clarification node: {state}")
-    return state
+    if not state.get('clarification_questions'):
+        # This case should ideally not be reached if conditional logic is correct
+        state['messages'].append(AIMessage(content="I need more details, but no specific questions were formulated."))
+        return state
 
+    questions_formatted = "\n".join([f"{i+1}. {q}" for i, q in enumerate(state['clarification_questions'])])
+    message_to_user = f"To ensure I create the best possible BRD for you, I have a few clarifying questions:\n{questions_formatted}\nPlease provide your answers."
+    state['messages'].append(AIMessage(content=message_to_user))
+
+    # In a real clarification loop:
+    # 1. The graph would effectively pause here, awaiting the next HumanMessage.
+    # 2. The main.py (or calling application) would collect user's answers and reinvoke the graph
+    #    with the new HumanMessage appended.
+    # 3. An edge would lead from here to a new node, e.g., 'process_clarification_answers_node'.
+    print(f"State after clarification_node: {state}")
+    return state
 
 # --- Conditional Edges ---
 def should_ask_for_clarification(state: AgentState) -> str:
-    print("--- Checking if clarification is needed ---")
+    """
+    Determines the next step after input analysis based on whether clarification is needed.
+    """
+    print("--- Conditional Edge: Checking if clarification is needed ---")
     if state.get('clarification_questions_needed', False) and state.get('clarification_questions'):
-        print("Decision: Clarification needed.")
+        print("Decision: Clarification needed. Routing to 'ask_clarification_questions'.")
         return "ask_clarification"
-    print("Decision: No clarification needed, proceed to generation.")
-    return "proceed_to_generation"
+    else:
+        print("Decision: No clarification needed. Routing to 'generate_brd'.")
+        return "proceed_to_generation"
 
 # --- Graph Definition ---
 def create_graph():
@@ -109,51 +151,84 @@ def create_graph():
     # Add nodes
     workflow.add_node("start", start_node)
     workflow.add_node("analyze_input", analyze_input_node)
-    # workflow.add_node("clarification_needed_check", analyze_input_node) # This was re-using analyze_input, but conditional edges take a source node
     workflow.add_node("ask_clarification_questions", clarification_node)
     workflow.add_node("generate_brd", generate_brd_node)
+    # TODO: When implementing the full clarification loop, add 'process_clarification_answers_node'.
 
     # Set entry point
     workflow.set_entry_point("start")
 
-    # Add edges
+    # Define edges
     workflow.add_edge("start", "analyze_input")
 
-    # Conditional edge after analysis
+    # Conditional branching after input analysis
     workflow.add_conditional_edges(
-        "analyze_input", # Source node for the conditional logic
+        "analyze_input",
         should_ask_for_clarification,
         {
             "ask_clarification": "ask_clarification_questions",
             "proceed_to_generation": "generate_brd"
         }
     )
-    # For now, clarification node leads to END. Later, it would loop back for user input.
+
+    # Current end points of branches
+    workflow.add_edge("generate_brd", END)
+
+    # For the clarification branch:
+    # In the current simplified version, it also ends.
+    # TODO: For a full clarification loop:
+    #   1. 'ask_clarification_questions' would not necessarily go to END.
+    #   2. The graph would expect a new HumanMessage with answers.
+    #   3. An edge (possibly implicit or handled by re-invocation logic) would lead to
+    #      a 'process_clarification_answers_node'.
+    #   4. 'process_clarification_answers_node' would then likely lead back to 'generate_brd_node'
+    #      or potentially 'analyze_input_node' if answers require further analysis or more questions.
     workflow.add_edge("ask_clarification_questions", END)
-    workflow.add_edge("generate_brd", END) # End after generation
 
     # Compile the graph
     app = workflow.compile()
     return app
 
 if __name__ == '__main__':
-    # This is for basic testing of the graph structure.
-    # More comprehensive interaction will be in main.py.
     app = create_graph()
 
-    # Example of how to run it
-    initial_state = {"userInput": "Develop an AI chatbot for customer service.", "messages": []}
-
-    print("Testing graph execution...")
-    # Note: LangGraph's `stream` method returns an iterator.
-    # We need to consume it to see the execution.
-    for event in app.stream(initial_state):
-        # Each `event` is a dictionary where keys are node names
-        # and values are the output of that node.
+    # Test Case 1: Straight to BRD generation (default behavior of analyze_input_node)
+    print("\n--- Test Case 1: Straight to BRD Generation ---")
+    initial_state_1 = {
+        "userInput": "Develop an AI chatbot for customer service that handles returns and FAQs.",
+        "messages": []
+    }
+    # Stream events to see node execution
+    for event in app.stream(initial_state_1, {"recursion_limit": 5}):
         print(f"Event: {event}")
         print("---")
+    final_state_1 = app.invoke(initial_state_1)
+    print(f"Final state 1: {final_state_1.get('messages', [])[-1].content if final_state_1.get('messages') else 'No messages'}")
 
-    final_state = app.invoke(initial_state)
-    print(f"Final state: {final_state}")
 
-    print("\nGraph structure defined. Further implementation of node logic is pending.")
+    # Test Case 2: Conceptual test for clarification path
+    # This requires modifying analyze_input_node to trigger clarification,
+    # or manually preparing a state that would emerge from such a node.
+    print("\n--- Test Case 2: Conceptual Clarification Path ---")
+    # To truly test this, we'd mock analyze_input_node or set state like this:
+    initial_state_2 = {
+        "userInput": "Vague idea.",
+        "messages": [HumanMessage(content="Vague idea.")], # Assuming start_node ran
+        "clarification_questions_needed": True, # Manually set for testing this path
+        "clarification_questions": ["What is the primary goal?", "Who are the target users?"],
+        "current_brd_content": ""
+    }
+    # If analyze_input was the one setting these, it would be called first.
+    # Since we are manually setting, we might want to start graph from after analyze_input
+    # or ensure analyze_input doesn't overwrite these if called.
+    # For this simple if __name__ test, we'll just invoke directly.
+    # The 'analyze_input' node will run and currently will reset clarification_questions_needed to False.
+    # So, this test won't show the clarification path unless analyze_input_node is modified for testing.
+
+    # To properly test this path in isolation, you might call a subgraph or specific nodes.
+    # For now, this just shows the intent.
+    print("Note: analyze_input_node currently overrides clarification_needed. Modify it to test this path.")
+    # final_state_2 = app.invoke(initial_state_2) # This will not show clarification due to analyze_input_node's current behavior
+    # print(f"Final state 2 (conceptual): {final_state_2.get('messages', [])[-1].content if final_state_2.get('messages') else 'No messages'}")
+
+    print("\nGraph structure reviewed. Further implementation of node logic (especially analyze_input and clarification loop) is pending.")
