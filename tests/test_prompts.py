@@ -26,7 +26,9 @@ class TestPrompts(unittest.TestCase):
         self.assertIn("2.  **Business Context & Drivers**", INITIAL_BRD_SECTIONS_TASK_TEMPLATE)
         self.assertIn("3.  **Stakeholder Analysis**", INITIAL_BRD_SECTIONS_TASK_TEMPLATE)
         self.assertIn("4.  **Vision & Scope**", INITIAL_BRD_SECTIONS_TASK_TEMPLATE)
-        self.assertIn("5.  **Functional Requirements**", INITIAL_BRD_SECTIONS_TASK_TEMPLATE)
+        self.assertIn("5.  **Business Process Models**", INITIAL_BRD_SECTIONS_TASK_TEMPLATE)
+        self.assertIn("6.  **Conceptual Solution Architecture**", INITIAL_BRD_SECTIONS_TASK_TEMPLATE)
+        self.assertIn("7.  **Functional Requirements**", INITIAL_BRD_SECTIONS_TASK_TEMPLATE)
         # Check order implicitly by checking the full string for specific sequence.
         # A more robust way would be regex or parsing, but this covers the main requirement.
         self.assertTrue(INITIAL_BRD_SECTIONS_TASK_TEMPLATE.find("1.  **Executive Summary**") < \
@@ -36,7 +38,11 @@ class TestPrompts(unittest.TestCase):
         self.assertTrue(INITIAL_BRD_SECTIONS_TASK_TEMPLATE.find("3.  **Stakeholder Analysis**") < \
                         INITIAL_BRD_SECTIONS_TASK_TEMPLATE.find("4.  **Vision & Scope**"))
         self.assertTrue(INITIAL_BRD_SECTIONS_TASK_TEMPLATE.find("4.  **Vision & Scope**") < \
-                        INITIAL_BRD_SECTIONS_TASK_TEMPLATE.find("5.  **Functional Requirements**"))
+                        INITIAL_BRD_SECTIONS_TASK_TEMPLATE.find("5.  **Business Process Models**"))
+        self.assertTrue(INITIAL_BRD_SECTIONS_TASK_TEMPLATE.find("5.  **Business Process Models**") < \
+                        INITIAL_BRD_SECTIONS_TASK_TEMPLATE.find("6.  **Conceptual Solution Architecture**"))
+        self.assertTrue(INITIAL_BRD_SECTIONS_TASK_TEMPLATE.find("6.  **Conceptual Solution Architecture**") < \
+                        INITIAL_BRD_SECTIONS_TASK_TEMPLATE.find("7.  **Functional Requirements**"))
 
 
 if __name__ == '__main__':

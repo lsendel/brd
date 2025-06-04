@@ -219,7 +219,16 @@ SECTIONS TO GENERATE:
     *   In-scope features (high-level list based on input)
     *   Out-of-scope items (make reasonable assumptions or state if unclear)
 
-5.  **Functional Requirements** (Provide a basic list of 2-3 user stories with acceptance criteria if the input allows, otherwise a placeholder structure. Number them starting from FR-001.)
+5.  **Business Process Models** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Based on input, briefly describe current AS-IS and future TO-BE processes. Mention potential for gap analysis.)
+    *   Current State (AS-IS) Process (briefly describe based on input)
+    *   Future State (TO-BE) Process (briefly describe based on input)
+    *   Gap Analysis (mention potential if inferable)
+
+6.  **Conceptual Solution Architecture** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Based on input, describe a high-level system context and list major components hinted at.)
+    *   High-Level System Context (describe briefly based on input)
+    *   Major Components (list if inferable from input)
+
+7.  **Functional Requirements** (Provide a basic list of 2-3 user stories with acceptance criteria if the input allows, otherwise a placeholder structure. Number them starting from FR-001.)
     *   Example:
         *   **FR-001: [User Story Title]**
             *   As a [type of user], I want [an action] so that [a benefit/value].
