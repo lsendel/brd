@@ -31,6 +31,7 @@ def initialize_llm() -> Optional[ChatOpenAI]:
     if not api_key:
         print("WARNING: OPENAI_API_KEY not found in environment. LLM calls will fail.")
         return None
+# llm: ChatOpenAI | None = None
 
     # Check for dummy test keys
     if api_key.startswith("dummy_") or api_key == "test_key":
@@ -58,6 +59,19 @@ def initialize_llm() -> Optional[ChatOpenAI]:
 
 # Initialize the LLM
 llm = initialize_llm()
+# if os.getenv("OPENAI_API_KEY"):
+#     model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-3.5-turbo")
+#     temperature_str = os.getenv("OPENAI_TEMPERATURE", "0.7")
+#     try:
+#         temperature = float(temperature_str)
+#     except ValueError:
+#         print(f"WARNING: Invalid OPENAI_TEMPERATURE value '{temperature_str}'. Defaulting to 0.7.")
+#         temperature = 0.7
+#
+#     llm = ChatOpenAI(model=model_name, temperature=temperature)
+#     print(f"INFO: LLM initialized with model: {model_name}, temperature: {temperature}.")
+# else:
+#     print("WARNING: OPENAI_API_KEY not found. LLM (StrataBRD Pro agent) will not be functional.")
 
 # Note: Consider adding retry logic (e.g., using 'tenacity') for LLM calls
 #       in a production setting to handle transient network issues.
@@ -68,7 +82,7 @@ llm = initialize_llm()
     retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError)), # Retry on these specific OpenAI errors
     reraise=True # Re-raise the last exception to be caught by the function's try/except
 )
-def generate_initial_brd_sections(user_input: str) -> str:
+def generate_initial_brd_sections(llm: ChatOpenAI | None, user_input: str) -> str:
     """
     Generates initial BRD sections based on user input.
 
@@ -77,7 +91,7 @@ def generate_initial_brd_sections(user_input: str) -> str:
     Returns generated BRD content as a string, or an error message string if LLM fails.
     """
     if not llm:
-        print("ERROR: LLM not available (OPENAI_API_KEY missing or invalid). Cannot generate BRD sections.")
+        print("ERROR: LLM not available (OPENAI_API_KEY missing or invalid, or LLM not provided). Cannot generate BRD sections.")
         # Construct a placeholder structure based on the template for user feedback
         sections_to_generate_header = "SECTIONS TO GENERATE:"
         start_index = INITIAL_BRD_SECTIONS_TASK_TEMPLATE.find(sections_to_generate_header)
@@ -149,7 +163,7 @@ If LLM were available, it would attempt to generate sections like:
     retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError)),
     reraise=True
 )
-def get_clarification_questions(current_project_summary: str, latest_user_utterance: str) -> List[str]:
+def get_clarification_questions(llm: ChatOpenAI | None, current_project_summary: str, latest_user_utterance: str) -> List[str]:
     """
     Analyzes the current project summary and latest user utterance to determine if clarification
     questions are needed to draft a comprehensive BRD.
@@ -159,6 +173,12 @@ def get_clarification_questions(current_project_summary: str, latest_user_uttera
         print("ERROR: LLM not available (OPENAI_API_KEY missing or invalid). Cannot generate clarification questions.")
         # Return a message indicating the issue for the state.
         return ["LLM_UNAVAILABLE: Could not generate clarification questions due to missing API key."]
+        print("ERROR: LLM not available (OPENAI_API_KEY missing or LLM not provided). Cannot generate clarification questions.")
+        # Return a default question or empty list if no LLM.
+        # For now, returning an empty list and a message indicating the issue for the state.
+        # It might be better for the graph to know this explicitly.
+        # For now, the calling node should check if messages were added.
+        return ["LLM_UNAVAILABLE: Could not generate clarification questions due to missing API key or LLM not provided."]
 
     print(f"--- Calling LLM for Clarification Questions. Summary: '{current_project_summary[:100]}...', Utterance: '{latest_user_utterance[:100]}...' ---")
 
@@ -252,16 +272,16 @@ def get_clarification_questions(current_project_summary: str, latest_user_uttera
     retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError)),
     reraise=True
 )
-def refine_project_understanding(current_summary: str, questions_asked: List[str], user_answers: str) -> str:
+def refine_project_understanding(llm: ChatOpenAI | None, current_summary: str, questions_asked: List[str], user_answers: str) -> str:
     """
     Refines the project understanding by synthesizing the current summary, questions asked,
     and user's answers into a new, coherent summary.
     Returns the revised project summary.
     """
     if not llm:
-        print("ERROR: LLM not available (OPENAI_API_KEY missing or invalid). Cannot refine project understanding.")
+        print("ERROR: LLM not available (OPENAI_API_KEY missing or LLM not provided). Cannot refine project understanding.")
         # Return the original summary appended with an error message.
-        return f"{current_summary}\n\n[LLM_UNAVAILABLE: Could not refine project understanding due to missing API key. The above understanding is based on previous information only.]"
+        return f"{current_summary}\n\n[LLM_UNAVAILABLE: Could not refine project understanding due to missing API key or LLM not provided. The above understanding is based on previous information only.]"
 
     print(f"--- Calling LLM for Project Understanding Refinement. ---")
     print(f"  Current Summary: '{current_summary[:100]}...'")
@@ -323,50 +343,65 @@ if __name__ == '__main__':
     # For direct script testing, ensure .env is loaded if you rely on it here.
     # For this test, we'll explicitly check for the API key.
 
-    api_key_present = bool(os.getenv("OPENAI_API_KEY"))
-    print(f"OpenAI API Key Present: {api_key_present}")
-    if not api_key_present:
-        print("WARNING: OPENAI_API_KEY not found. LLM-dependent tests will show placeholder/error messages.")
+    local_llm_instance: ChatOpenAI | None = None
+    if os.getenv("OPENAI_API_KEY"):
+        model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-3.5-turbo")
+        temperature_str = os.getenv("OPENAI_TEMPERATURE", "0.7")
+        try:
+            temperature = float(temperature_str)
+        except ValueError:
+            print(f"WARNING: Invalid OPENAI_TEMPERATURE value '{temperature_str}'. Defaulting to 0.7 for local test LLM.")
+            temperature = 0.7
+        try:
+            local_llm_instance = ChatOpenAI(model=model_name, temperature=temperature)
+            print(f"INFO: Local LLM instance for testing initialized with model: {model_name}, temperature: {temperature}.")
+        except Exception as e:
+            print(f"ERROR: Failed to initialize local_llm_instance for testing: {e}")
+            local_llm_instance = None
+    else:
+        print("WARNING: OPENAI_API_KEY not found in environment. LLM-dependent tests will show placeholder/error messages as LLM cannot be initialized.")
 
     print("\n--- Test: generate_initial_brd_sections ---")
     sample_input_brd = "Develop an AI-powered chatbot for customer service that can handle product returns and answer FAQs."
-    brd_output = generate_initial_brd_sections(sample_input_brd)
+    # Pass the local_llm_instance to the function
+    brd_output = generate_initial_brd_sections(local_llm_instance, sample_input_brd)
     print("\nOutput from generate_initial_brd_sections:")
     print(brd_output)
 
-    # Only run LLM-dependent tests if API key is present
-    if api_key_present:
-        print("\n--- Test: get_clarification_questions (API Key Present) ---")
+    # Test logic now depends on local_llm_instance being successfully created
+    if local_llm_instance:
+        print("\n--- Test: get_clarification_questions (LLM instance available) ---")
         summary_test_cq = "The user wants a new e-commerce platform. It should sell books."
         utterance_test_cq = "We also need to support credit card payments and target young adults."
 
         print(f"\nSimulating get_clarification_questions with summary: '{summary_test_cq}' and utterance: '{utterance_test_cq}'")
-        questions = get_clarification_questions(summary_test_cq, utterance_test_cq)
+        # Pass the local_llm_instance
+        questions = get_clarification_questions(local_llm_instance, summary_test_cq, utterance_test_cq)
 
         if questions and not any(q.startswith("LLM_") or q.startswith("UNEXPECTED_") or q.startswith("Unparsed response") for q in questions):
             print("\nGenerated Clarification Questions (Success):")
             for q_idx, q_text in enumerate(questions):
                 print(f"  {q_idx+1}. {q_text}")
 
-            print("\n--- Test: refine_project_understanding (API Key Present, using above questions) ---")
-            # Simulate some answers based on the number of questions asked
+            print("\n--- Test: refine_project_understanding (LLM instance available, using above questions) ---")
             answers_parts = []
             for i in range(len(questions)):
                 answers_parts.append(f"Answer to question {i+1} would be here.")
             answers_test = " ".join(answers_parts)
             if not answers_test: answers_test = "User provided comprehensive answers to all questions."
 
-
+            # Pass the local_llm_instance
             refined_summary = refine_project_understanding(
-                current_summary=summary_test_cq + " " + utterance_test_cq, # Combine initial parts for summary
+                local_llm_instance,
+                current_summary=summary_test_cq + " " + utterance_test_cq,
                 questions_asked=questions,
                 user_answers=answers_test
             )
             print(f"\nInitial combined summary was: {summary_test_cq} {utterance_test_cq}")
             print(f"Refined Summary is: {refined_summary}")
 
-        elif any(q.startswith("LLM_UNAVAILABLE") for q in questions):
-            print("\nClarification Questions: LLM was unavailable (as expected if API key was missing despite outer check).")
+        elif any(q.startswith("LLM_UNAVAILABLE") for q in questions): # Should ideally not happen if local_llm_instance is not None
+            print("\nClarification Questions: LLM was reported as unavailable by the function unexpectedly.")
         elif any(q.startswith("LLM_") or q.startswith("UNEXPECTED_") for q in questions):
             print(f"\nClarification Questions: Received an error message from LLM call: {questions[0]}")
         elif any(q.startswith("Unparsed response") for q in questions):
@@ -374,22 +409,22 @@ if __name__ == '__main__':
         else: # Handles empty list specifically or other non-error cases
              print("\nClarification Questions: LLM indicated no clarification questions are needed or parsing yielded no questions.")
     else:
-        print("\n--- Test: get_clarification_questions (API Key Missing) ---")
-        # Test the behavior when LLM is not available
-        questions_no_api = get_clarification_questions("Test summary", "Test utterance")
-        print("\nOutput from get_clarification_questions (API Key Missing):")
-        if questions_no_api and questions_no_api[0].startswith("LLM_UNAVAILABLE"):
-            print(f"  Success: Received expected message: {questions_no_api[0]}")
+        print("\n--- Skipping LLM-dependent tests for get_clarification_questions and refine_project_understanding as LLM instance is not available. ---")
+        # Test the behavior when LLM is not available by explicitly passing None
+        print("\n--- Test: get_clarification_questions (LLM instance explicitly None) ---")
+        questions_no_llm = get_clarification_questions(None, "Test summary", "Test utterance")
+        print("\nOutput from get_clarification_questions (LLM instance None):")
+        if questions_no_llm and questions_no_llm[0].startswith("LLM_UNAVAILABLE"):
+            print(f"  Success: Received expected message: {questions_no_llm[0]}")
         else:
-            print(f"  Unexpected output: {questions_no_api}")
+            print(f"  Unexpected output: {questions_no_llm}")
 
-        print("\n--- Test: refine_project_understanding (API Key Missing) ---")
-        refined_summary_no_api = refine_project_understanding("Initial summary.", ["Q1?"], "Answer1.")
-        print("\nOutput from refine_project_understanding (API Key Missing):")
-        if "[LLM_UNAVAILABLE:" in refined_summary_no_api:
-            print(f"  Success: Received expected message in summary: \n{refined_summary_no_api}")
+        print("\n--- Test: refine_project_understanding (LLM instance explicitly None) ---")
+        refined_summary_no_llm = refine_project_understanding(None, "Initial summary.", ["Q1?"], "Answer1.")
+        print("\nOutput from refine_project_understanding (LLM instance None):")
+        if "[LLM_UNAVAILABLE:" in refined_summary_no_llm:
+            print(f"  Success: Received expected message in summary: \n{refined_summary_no_llm}")
         else:
-            print(f"  Unexpected output: {refined_summary_no_api}")
-
+            print(f"  Unexpected output: {refined_summary_no_llm}")
 
     print("\n--- End of BRD Agent Function Tests ---")
