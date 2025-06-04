@@ -182,11 +182,11 @@ def main():
                     current_conversation_state = conv_state_loaded # This is now an AgentState instance
 
                     # Update config with thread_id and existing llm_instance
-                    current_thread_id = current_conversation_state.thread_id
+                    current_thread_id = current_conversation_state['thread_id']
                     if not current_thread_id:
                         thread_id_counter += 1
                         current_thread_id = f"brd-cli-thread-{current_project_id}-{thread_id_counter}"
-                        current_conversation_state.thread_id = current_thread_id # Set on the instance
+                        current_conversation_state['thread_id'] = current_thread_id # Set on the instance
                         print(f"WARNING: No Thread ID found in loaded project state object. Generated new one: {current_thread_id}")
                     else:
                         print(f"INFO: Using existing Thread ID from loaded project: {current_thread_id}")
@@ -194,8 +194,8 @@ def main():
                     config = {**base_config, "configurable": {"thread_id": current_thread_id}}
 
 
-                    if not current_conversation_state.messages and \
-                       not current_conversation_state.clarification_questions_pending_answer:
+                    if not current_conversation_state['messages'] and \
+                       not current_conversation_state['clarification_questions_pending_answer']:
                         print(f"\nProject '{current_project_id}' is loaded. It seems to be at an initial state or requires new input.")
                         user_input_for_loaded = get_user_choice(
                             f"Enter your next query or concept for '{current_project_id}' (or 'exit' to return to menu): "
@@ -204,7 +204,7 @@ def main():
                             current_project_id, current_conversation_state = None, None
                             config = {**base_config} # Reset config to base (only llm)
                             continue
-                        current_conversation_state.userInput = user_input_for_loaded # Set on the instance
+                        current_conversation_state['userInput'] = user_input_for_loaded # Set on the instance
                 else:
                     # Error messages are printed by load_project_core_logic
                     print("Returning to main menu.")
@@ -265,7 +265,7 @@ def main():
         # --- Interaction with the Agent Graph ---
         if current_project_id and current_conversation_state: # current_conversation_state is AgentState object
             # Determine if we need to prompt for answers or new input
-            if current_conversation_state.clarification_questions_pending_answer:
+            if current_conversation_state['clarification_questions_pending_answer']:
                 prompt_msg = "\nPlease provide answers to the agent's questions (or type 'exit' to quit project and return to menu): "
                 answers_input = get_user_choice(prompt_msg)
                 if answers_input == "exit":
@@ -274,15 +274,15 @@ def main():
                     config = {**base_config} # Reset config to base (only llm)
                     continue
 
-                current_conversation_state.add_message(HumanMessage(content=answers_input))
-                current_conversation_state.set_answers_pending(False) # Answers provided
+                current_conversation_state['messages'].append(HumanMessage(content=answers_input))
+                current_conversation_state['clarification_questions_pending_answer'] = False # Answers provided
                 print("\nProcessing your answers...")
-            elif not current_conversation_state.messages and current_conversation_state.userInput:
+            elif not current_conversation_state['messages'] and current_conversation_state['userInput']:
                 # First turn of a new project or loaded project that needs initial processing
                 print(f"\nProcessing initial concept for '{current_project_id}'...")
-            elif not current_conversation_state.userInput and \
-                 not current_conversation_state.messages and \
-                 not current_conversation_state.clarification_questions_pending_answer:
+            elif not current_conversation_state['userInput'] and \
+                 not current_conversation_state['messages'] and \
+                 not current_conversation_state['clarification_questions_pending_answer']:
                 # Loaded an empty or minimal project state, needs initial concept.
                 user_input_concept = get_user_choice( # Renamed to avoid conflict
                     f"Project '{current_project_id}' is empty. Enter your high-level concept or BRD idea (or 'exit' to return to menu): "
@@ -292,7 +292,7 @@ def main():
                     current_project_id, current_conversation_state = None, None
                     config = {**base_config} # Reset config to base (only llm)
                     continue
-                current_conversation_state.userInput = user_input_concept # Set on the instance
+                current_conversation_state['userInput'] = user_input_concept # Set on the instance
                 print(f"\nProcessing initial concept for '{current_project_id}'...")
             # Else: graph has messages and is not pending questions, it might be continuing a completed task.
             # The user will be prompted *after* this graph.invoke if no questions are asked.
@@ -325,28 +325,28 @@ def main():
                     # Ensure thread_id from config is saved back to state object if it was newly generated for loaded project
                     # This should already be handled if current_conversation_state.thread_id was set.
                     # config_thread_id = config.get("configurable", {}).get("thread_id")
-                    # if config_thread_id and current_conversation_state.thread_id != config_thread_id:
-                    #    current_conversation_state.thread_id = config_thread_id # Ensure consistency
+                    # if config_thread_id and current_conversation_state['thread_id'] != config_thread_id:
+                    #    current_conversation_state['thread_id'] = config_thread_id # Ensure consistency
 
-                    save_project(current_project_id, current_conversation_state.to_dict()) # Convert to dict for saving
+                    save_project(current_project_id, current_conversation_state) # Convert to dict for saving
                     print(f"Project '{current_project_id}' saved successfully.")
 
                 print("\n--- Conversation Update ---")
-                if final_state_obj and final_state_obj.messages:
-                    for msg in final_state_obj.messages:
+                if final_state_obj and final_state_obj['messages']:
+                    for msg in final_state_obj['messages']:
                         if isinstance(msg, HumanMessage): print(f"  YOU: {msg.content}")
                         elif isinstance(msg, AIMessage): print(f"  AGENT: {msg.content}")
                         else: print(f"  {msg.type.upper()}: {str(msg.content if hasattr(msg, 'content') else msg)}")
                 else:
                     print("No messages in the current state to display.")
 
-                if final_state_obj.clarification_questions_pending_answer:
+                if final_state_obj['clarification_questions_pending_answer']:
                     # Agent asked questions (printed above). Loop will prompt for answers.
                     pass
                 else: # Agent phase complete (BRD generated or error occurred and handled by agent)
                     print("\n--- Agent Interaction Complete for this phase ---")
-                    brd_content_output = final_state_obj.current_brd_content
-                    agent_messages_list = final_state_obj.messages # Renamed to avoid conflict
+                    brd_content_output = final_state_obj['current_brd_content']
+                    agent_messages_list = final_state_obj['messages'] # Renamed to avoid conflict
                     last_ai_message_content = ""
                     if agent_messages_list and isinstance(agent_messages_list[-1], AIMessage):
                         last_ai_message_content = agent_messages_list[-1].content or ""
@@ -401,8 +401,8 @@ def main():
                             current_project_id, current_conversation_state = None, None
                             config = {**base_config} # Reset config
                             continue
-                        current_conversation_state.userInput = user_input_refine
-                        current_conversation_state.set_brd_content("") # Clear old BRD
+                        current_conversation_state['userInput'] = user_input_refine
+                        current_conversation_state['current_brd_content'] = "" # Clear old BRD
                         # messages list is handled by add_message or graph itself.
                     elif next_action == 'n' or next_action == 'l':
                         current_project_id, current_conversation_state = None, None

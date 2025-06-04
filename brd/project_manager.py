@@ -142,7 +142,15 @@ def create_new_project_core_logic(
     # Instantiate AgentState class
     current_conversation_state = AgentState(
         userInput=initial_user_input,
-        thread_id=new_thread_id # Pass thread_id to constructor
-        # Other fields will use defaults from AgentState __init__
+        thread_id=new_thread_id,
+        messages=[],
+        current_brd_content="",
+        clarification_questions_needed=False,
+        clarification_questions=[],
+        current_understanding=initial_user_input, # Initial understanding set to the first user input
+        max_clarification_rounds=3, # Default value for max clarification rounds
+        current_clarification_round=0, # Starts at round 0
+        clarification_questions_pending_answer=False, # No questions pending initially
+        route_condition="" # Initial route condition, can be set by start_node or other logic later
     )
     return project_id, current_conversation_state, config
