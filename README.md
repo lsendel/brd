@@ -13,6 +13,7 @@ The agent embodies the persona of "StrataBRD Pro," an elite AI Business Requirem
     -   Vision & Scope
     -   Basic Functional Requirements (as user stories with acceptance criteria)
 -   Follows the core principles and output standards defined in its persona.
+-   **Project Persistence**: Automatically saves your work and allows you to load and continue existing projects. Project data is stored locally in the `brd/saved_projects/` directory.
 
 ## Project Structure
 
@@ -57,13 +58,17 @@ The agent embodies the persona of "StrataBRD Pro," an elite AI Business Requirem
     ```bash
     python main.py
     ```
-    The agent will initialize and prompt you to enter your high-level concept.
+    The agent will initialize. If you have existing saved projects, it will list them and ask if you want to load one. Otherwise, or if you choose not to load, you'll be prompted to name a new project. Your progress is saved automatically after each interaction.
 
 3.  **Example Interaction:**
     ```
     Enter your high-level concept or BRD idea: Develop an AI-powered chatbot for customer service that can handle product returns and answer FAQs.
     ```
     The agent will then process the request and output the generated BRD sections.
+
+## Project Persistence
+
+StrataBRD Pro now supports project persistence. When you start a new BRD, you'll be asked to name your project. All progress, including your inputs, the agent's generated content, and conversation history, is automatically saved to a JSON file in the `brd/saved_projects/` directory. When you run `main.py`, you'll have the option to load an existing project from this directory or start a new one.
 
 ## Running Tests
 
