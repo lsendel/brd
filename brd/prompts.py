@@ -203,12 +203,23 @@ SECTIONS TO GENERATE:
     *   Proposed solution overview (derived from input)
     *   Expected benefits (high-level, if inferable)
 
-2.  **Vision & Scope**
+2.  **Business Context & Drivers** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Fill based on user input, making reasonable inferences.)
+    *   Market analysis (high-level, if inferable from input)
+    *   Competitive landscape (high-level, if inferable from input)
+    *   Regulatory environment (mention if obviously relevant, e.g., for finance/health, based on input)
+    *   Technology trends (briefly, if applicable based on input)
+    *   Organizational readiness (assume ready unless input implies otherwise)
+
+3.  **Stakeholder Analysis** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Fill based on user input, making reasonable inferences.)
+    *   Stakeholder identification (list potential stakeholders based on input)
+    *   Basic needs/expectations for a few key stakeholders (derived from input)
+
+4.  **Vision & Scope**
     *   Product vision statement (derived from input)
     *   In-scope features (high-level list based on input)
     *   Out-of-scope items (make reasonable assumptions or state if unclear)
 
-3.  **Functional Requirements** (Provide a basic list of 2-3 user stories with acceptance criteria if the input allows, otherwise a placeholder structure)
+5.  **Functional Requirements** (Provide a basic list of 2-3 user stories with acceptance criteria if the input allows, otherwise a placeholder structure. Number them starting from FR-001.)
     *   Example:
         *   **FR-001: [User Story Title]**
             *   As a [type of user], I want [an action] so that [a benefit/value].
