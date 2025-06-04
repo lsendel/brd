@@ -209,6 +209,59 @@ class TestPersistence(unittest.TestCase):
         os.makedirs(TEST_PROJECTS_DIR, exist_ok=True)
         self.assertEqual(list_projects(), [])
 
+    def test_07_load_corrupted_json_project(self):
+        """Test loading a project from a corrupted (invalid JSON) file."""
+        project_id = "corrupted_json"
+        file_path = os.path.join(TEST_PROJECTS_DIR, f"{project_id}.json")
+
+        # Create a corrupted JSON file
+        with open(file_path, "w") as f:
+            f.write("{'name': 'test', 'messages': [") # Invalid JSON syntax
+
+        with self.assertRaises(ValueError) as context:
+            load_project(project_id)
+
+        self.assertTrue("Failed to decode project file" in str(context.exception))
+        self.assertTrue("corrupted or not valid JSON" in str(context.exception))
+
+    @patch('builtins.print') # To capture print statements (warnings)
+    def test_08_dict_to_message_unknown_type(self, mock_print):
+        """Test _dict_to_message with an unknown message type."""
+        unknown_message_dict = {"type": "future_message_type", "content": "Some future content"}
+
+        message = _dict_to_message(unknown_message_dict)
+
+        self.assertIsInstance(message, AIMessage) # Should fallback to AIMessage
+        self.assertEqual(message.content, f"Unknown message type stored: {str(unknown_message_dict)}")
+
+        # Check if the warning was printed
+        mock_print.assert_any_call(f"Warning: Unknown or missing message type 'future_message_type' in stored message: {unknown_message_dict}. Falling back to AIMessage.")
+
+    def test_09_save_io_error(self):
+        """Test save_project under an IOError condition."""
+        project_id = "save_io_error_test"
+        sample_state = {"userInput": "test", "messages": []}
+
+        # Patch open to raise IOError on write
+        with patch('builtins.open', unittest.mock.mock_open()) as mock_file:
+            mock_file.side_effect = IOError("Disk full")
+            with self.assertRaises(IOError) as context:
+                save_project(project_id, sample_state)
+            self.assertIn("Disk full", str(context.exception))
+
+    def test_10_load_io_error(self):
+        """Test load_project under an IOError condition (not FileNotFoundError)."""
+        project_id = "load_io_error_test"
+        # First, save a valid project so the file exists for the load attempt
+        save_project(project_id, {"userInput": "data", "messages": []})
+
+        # Patch open to raise IOError on read after the file existence check
+        with patch('builtins.open', unittest.mock.mock_open()) as mock_file:
+            mock_file.side_effect = IOError("Permission denied")
+            with self.assertRaises(IOError) as context:
+                load_project(project_id)
+            self.assertIn("Permission denied", str(context.exception))
+
 
 if __name__ == '__main__':
     unittest.main()

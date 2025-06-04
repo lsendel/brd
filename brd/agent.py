@@ -1,16 +1,15 @@
 import os
+import json # Added for parsing JSON in get_clarification_questions
+import re
+from typing import List
+
 from langchain_openai import ChatOpenAI
-import re # For parsing questions
-from typing import List # For type hinting
 from langchain_core.prompts import ChatPromptTemplate
-# Removed BaseLangChainError import
-# It's good practice to also be aware of specific OpenAI errors,
-# though LangChain might wrap them.
+# Specific OpenAI errors for more granular handling
 from openai import APIError, RateLimitError, AuthenticationError, APITimeoutError, APIConnectionError
 
-
 from brd.prompts import (
-    STRATA_BRD_PRO_PERSONA,
+    STRATA_BRD_PRO_PERSONA, # The core persona defining the agent's behavior and standards.
     INITIAL_BRD_SECTIONS_TASK_TEMPLATE,
     CLARIFICATION_QUESTIONS_TEMPLATE,
     REFINE_UNDERSTANDING_TEMPLATE # New import
@@ -20,35 +19,46 @@ from brd.prompts import (
 if not os.getenv("OPENAI_API_KEY"):
     print("Warning: OPENAI_API_KEY not found in environment. LLM calls will fail.")
 
-# TODO: Experiment with more advanced models (e.g., GPT-4) and temperature settings
-#       as the agent matures. Consider making these configurable.
-llm = None
-if os.getenv("OPENAI_API_KEY"):
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
-else:
-    print("Warning: LLM not initialized due to missing OPENAI_API_KEY. Operations requiring LLM will use placeholder data or fail gracefully if not handled.")
+# Global LLM instance, configured from environment variables.
+# It's initialized once when the module is loaded.
+llm: ChatOpenAI | None = None
 
-# TODO: In a production setting, consider adding retry logic (e.g., using the 'tenacity' library)
-#       for LLM calls to handle transient network issues or temporary API unavailability.
+if os.getenv("OPENAI_API_KEY"):
+    model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-3.5-turbo")
+    temperature_str = os.getenv("OPENAI_TEMPERATURE", "0.7")
+    try:
+        temperature = float(temperature_str)
+    except ValueError:
+        print(f"WARNING: Invalid OPENAI_TEMPERATURE value '{temperature_str}'. Defaulting to 0.7.")
+        temperature = 0.7
+
+    llm = ChatOpenAI(model=model_name, temperature=temperature)
+    print(f"INFO: LLM initialized with model: {model_name}, temperature: {temperature}.")
+else:
+    print("WARNING: OPENAI_API_KEY not found. LLM (StrataBRD Pro agent) will not be functional.")
+
+# Note: Consider adding retry logic (e.g., using 'tenacity') for LLM calls
+#       in a production setting to handle transient network issues.
 
 def generate_initial_brd_sections(user_input: str) -> str:
     """
-    Generates a subset of BRD sections based on user input and the StrataBRD Pro persona.
-    Focuses on: Executive Summary, Vision & Scope, and a basic Functional Requirements structure.
+    Generates initial BRD sections based on user input.
+
+    Uses the STRATA_BRD_PRO_PERSONA and INITIAL_BRD_SECTIONS_TASK_TEMPLATE.
+    Focuses on: Executive Summary, Vision & Scope, and basic Functional Requirements.
+    Returns generated BRD content as a string, or an error message string if LLM fails.
     """
     if not llm:
-        # OPENAI_API_KEY was not set, llm was not initialized.
-        # Return a structured message indicating this, for structural verification.
-        print("--- LLM not available (OPENAI_API_KEY missing). Returning structural template. ---")
-        # Extract section headers from INITIAL_BRD_SECTIONS_TASK_TEMPLATE to show structure
-        # This is a simplified way to get them for this specific verification task.
-        # A more robust way might involve parsing the template if it were more complex.
+        print("ERROR: LLM not available (OPENAI_API_KEY missing or invalid). Cannot generate BRD sections.")
+        # Construct a placeholder structure based on the template for user feedback
         sections_to_generate_header = "SECTIONS TO GENERATE:"
         start_index = INITIAL_BRD_SECTIONS_TASK_TEMPLATE.find(sections_to_generate_header)
-        sections_text = ""
+        sections_text = "[Structure Undefined - Template Parsing Failed]"
         if start_index != -1:
-            sections_text = INITIAL_BRD_SECTIONS_TASK_TEMPLATE[start_index + len(sections_to_generate_header):].strip()
-            # Replace the example part for functional requirements for cleaner structural view
+            sections_text = INITIAL_BRD_SECTIONS_TASK_TEMPLATE[
+                start_index + len(sections_to_generate_header):
+            ].strip()
+            # Clean up example for placeholder
             fr_example_text = """\
     *   Example:
         *   **FR-001: [User Story Title]**
@@ -56,16 +66,18 @@ def generate_initial_brd_sections(user_input: str) -> str:
             *   **Acceptance Criteria:**
                 *   Criterion 1.
                 *   Criterion 2."""
-            sections_text = sections_text.replace(fr_example_text, "    *   [Functional Requirements details would be generated here]")
-
+            sections_text = sections_text.replace(fr_example_text, "    *   [Functional Requirements details would be generated here by LLM]")
 
         return f"""
-Error: OPENAI_API_KEY not set. LLM not called.
-This is a placeholder output to verify structure.
-Based on your input: "{user_input[:100]}..."
+####################################################################################
+ERROR: LLM NOT AVAILABLE (OPENAI_API_KEY missing or invalid).
+LLM was not called. Cannot generate BRD sections.
+This is a placeholder output.
+Input received: "{user_input[:150]}..."
 
-Expected sections to be generated by the LLM:
+If LLM were available, it would attempt to generate sections like:
 {sections_text}
+####################################################################################
 """
 
     print(f"--- Calling LLM for BRD Generation with input: {user_input[:100]}... ---")
@@ -80,33 +92,27 @@ Expected sections to be generated by the LLM:
         response = chain.invoke({"user_input": user_input})
 
         generated_content = response.content
-        print("--- LLM Response Received ---")
+        print("--- LLM Response Received for BRD Generation ---")
         return generated_content
-    # Specific OpenAI errors
-    except APIError as e: # Catching the base OpenAI error
+    except AuthenticationError as e:
+        print(f"ERROR: OpenAI AuthenticationError during BRD generation: {e}. Check your API key.")
+        return "Error: LLM authentication failed. Please check your API key. BRD generation could not be completed."
+    except RateLimitError as e:
+        print(f"ERROR: OpenAI RateLimitError during BRD generation: {e}. You might be exceeding your quota or rate limits.")
+        return "Error: LLM rate limit exceeded. Please try again later or check your OpenAI plan. BRD generation could not be completed."
+    except (APITimeoutError, APIConnectionError) as e:
         error_type = type(e).__name__
-        print(f"OpenAI API Error during LLM call ({error_type}): {e}")
-
-        # Check for specific OpenAI error types
-        if isinstance(e, AuthenticationError):
-            return "Error: LLM authentication failed. Please check your API key."
-        elif isinstance(e, RateLimitError):
-            return "Error: LLM rate limit exceeded. Please try again later or check your plan."
-        elif isinstance(e, (APITimeoutError, APIConnectionError)):
-            return "Error: LLM connection issue. Please check your network or try again later."
-        else: # General APIError that isn't more specific from the ones above
-            return f"Error: An OpenAI API issue occurred while generating BRD content ({error_type})."
-    # Catch other potential errors that could be LangChain related or other unexpected issues
-    except Exception as e:
+        print(f"ERROR: OpenAI {error_type} during BRD generation: {e}. Check your network connection or OpenAI status.")
+        return f"Error: LLM connection issue ({error_type}). Please check your network or try again later. BRD generation could not be completed."
+    except APIError as e: # Catch other/general OpenAI API errors
         error_type = type(e).__name__
-        # Check if it's an error from LangChain by looking for 'langchain' in module name, if possible
+        print(f"ERROR: OpenAI APIError ({error_type}) during BRD generation: {e}.")
+        return f"Error: An OpenAI API issue occurred ({error_type}) while generating BRD content. BRD generation could not be completed."
+    except Exception as e: # Catch other unexpected errors (LangChain, etc.)
+        error_type = type(e).__name__
         module = getattr(type(e), '__module__', '')
-        if 'langchain' in module: # or 'langgraph' or other related ones
-            print(f"LangChain related error during LLM call ({error_type}): {e}")
-            return f"Error: A LangChain operation failed while generating BRD content ({error_type})."
-        else:
-            print(f"An unexpected error occurred during LLM call ({error_type}): {e}")
-            return "Error: An unexpected issue occurred while generating BRD content."
+        print(f"ERROR: An unexpected error ({error_type} in module '{module}') occurred during BRD generation: {e}")
+        return f"Error: An unexpected issue ('{error_type}') occurred while generating BRD content. BRD generation could not be completed."
 
 
 def get_clarification_questions(current_project_summary: str, latest_user_utterance: str) -> List[str]:
@@ -116,10 +122,12 @@ def get_clarification_questions(current_project_summary: str, latest_user_uttera
     Returns a list of questions or an empty list if no questions are needed.
     """
     if not llm:
-        print("--- LLM not available (OPENAI_API_KEY missing). Skipping clarification question generation. ---")
-        # Return a default question or empty list if no LLM. For now, empty.
-        # Could also return a fixed question like ["What are the primary goals for this project?"]
-        return []
+        print("ERROR: LLM not available (OPENAI_API_KEY missing). Cannot generate clarification questions.")
+        # Return a default question or empty list if no LLM.
+        # For now, returning an empty list and a message indicating the issue for the state.
+        # It might be better for the graph to know this explicitly.
+        # For now, the calling node should check if messages were added.
+        return ["LLM_UNAVAILABLE: Could not generate clarification questions due to missing API key."]
 
     print(f"--- Calling LLM for Clarification Questions. Summary: '{current_project_summary[:100]}...', Utterance: '{latest_user_utterance[:100]}...' ---")
 
@@ -139,49 +147,72 @@ def get_clarification_questions(current_project_summary: str, latest_user_uttera
         print(f"--- LLM Response for Clarification Questions: ---\n{response_content}")
 
         if response_content == "NO_QUESTIONS_NEEDED":
+            print("INFO: LLM indicated no clarification questions are needed.")
             return []
 
-        questions_found = []
+        # Attempt to parse as JSON first (expected format for future prompt versions)
+        try:
+            # The prompt is expected to return a JSON list of strings.
+            # Example: ["What is the target audience?", "What are the key success metrics?"]
+            parsed_questions = json.loads(response_content)
+            if isinstance(parsed_questions, list) and all(isinstance(q, str) for q in parsed_questions):
+                print("INFO: Successfully parsed clarification questions from JSON response.")
+                return parsed_questions
+            else:
+                print("WARNING: LLM response was valid JSON but not a list of strings. Falling back to text parsing.")
+                # Fall through to text parsing logic
+        except json.JSONDecodeError:
+            print("WARNING: LLM response for clarification questions was not valid JSON. Falling back to text parsing.")
+            # Fall through to text parsing logic (regex/line splitting)
+
+        # Fallback: Regex/line splitting for current or malformed responses
+        questions_found_fallback = []
         raw_lines = response_content.splitlines()
         for line in raw_lines:
             original_line_stripped = line.strip()
             if not original_line_stripped: # Skip empty or whitespace-only lines
                 continue
 
-            # Attempt to strip common list markers
+            # Attempt to strip common list markers (e.g., "1. ", "- ")
             cleaned_line = re.sub(r"^\s*(\d+[\.\)]\s*|-\s*)", "", original_line_stripped).strip()
 
-            # Add to questions if the line after stripping is non-empty AND
-            # (it was actually changed by stripping a marker OR it's a single-line response from LLM)
-            # The latter part (single-line response) is tricky; for now, we are strict:
-            # only add if a marker was visibly stripped or it's a very simple case.
-            # The prompt asks for a numbered list. If it's not, it's "malformed" or needs more robust parsing.
-            # For current tests, we require a marker to be stripped for a line to be a question,
-            # unless it's the *only* line of response.
-            if cleaned_line and cleaned_line != original_line_stripped: # Only add if a marker was stripped
-                questions_found.append(cleaned_line)
+            if cleaned_line: # If anything remains after stripping markers
+                questions_found_fallback.append(cleaned_line)
 
-        # If after trying to parse, no questions were found, AND the response wasn't the specific "NO_QUESTIONS_NEEDED" marker
-        if not questions_found and response_content != "NO_QUESTIONS_NEEDED":
-             print(f"Warning: Clarification LLM response was not 'NO_QUESTIONS_NEEDED' and no questions with valid markers could be parsed. Response: {response_content}")
-             return []
+        if not questions_found_fallback and response_content != "NO_QUESTIONS_NEEDED":
+             # This case means fallback parsing also failed to yield questions from a non-empty, non-"NO_QUESTIONS_NEEDED" response.
+             print(f"WARNING: Fallback text parsing also failed to extract questions from response: {response_content}")
+             # Return the raw response as a single question to indicate parsing failure but content availability.
+             return [f"Unparsed response (fallback): {response_content}"]
 
-        return questions_found
+        if questions_found_fallback:
+            print("INFO: Extracted questions using fallback text parsing.")
+            return questions_found_fallback
 
+        # If response_content was not NO_QUESTIONS_NEEDED, not JSON, and fallback found nothing (e.g. empty strings after stripping)
+        # This should be rare if the above logic is correct.
+        print(f"INFO: No questions extracted after JSON and fallback parsing. Original response: {response_content}")
+        return []
+
+    except AuthenticationError as e:
+        print(f"ERROR: OpenAI AuthenticationError during clarification questions: {e}.")
+        return ["LLM_AUTH_ERROR: Authentication failed. Could not get clarification questions."]
+    except RateLimitError as e:
+        print(f"ERROR: OpenAI RateLimitError during clarification questions: {e}.")
+        return ["LLM_RATE_LIMIT_ERROR: Rate limit exceeded. Could not get clarification questions."]
+    except (APITimeoutError, APIConnectionError) as e:
+        error_type = type(e).__name__
+        print(f"ERROR: OpenAI {error_type} during clarification questions: {e}.")
+        return [f"LLM_CONNECTION_ERROR: {error_type}. Could not get clarification questions."]
     except APIError as e:
         error_type = type(e).__name__
-        print(f"OpenAI API Error during clarification LLM call ({error_type}): {e}")
-        # Fallback to empty list or default question
-        return []
+        print(f"ERROR: OpenAI APIError ({error_type}) during clarification questions: {e}.")
+        return [f"LLM_API_ERROR: {error_type}. Could not get clarification questions."]
     except Exception as e:
         error_type = type(e).__name__
         module = getattr(type(e), '__module__', '')
-        if 'langchain' in module:
-            print(f"LangChain related error during clarification LLM call ({error_type}): {e}")
-        else:
-            print(f"An unexpected error occurred during clarification LLM call ({error_type}): {e}")
-        # Fallback to empty list or default question
-        return []
+        print(f"ERROR: An unexpected error ({error_type} in '{module}') occurred during clarification questions: {e}")
+        return [f"UNEXPECTED_ERROR: {error_type}. Could not get clarification questions."]
 
 
 def refine_project_understanding(current_summary: str, questions_asked: List[str], user_answers: str) -> str:
@@ -191,15 +222,21 @@ def refine_project_understanding(current_summary: str, questions_asked: List[str
     Returns the revised project summary.
     """
     if not llm:
-        print("--- LLM not available (OPENAI_API_KEY missing). Skipping project understanding refinement. ---")
-        # Return the original summary if LLM is not available
-        return current_summary
+        print("ERROR: LLM not available (OPENAI_API_KEY missing). Cannot refine project understanding.")
+        # Return the original summary appended with an error message.
+        return f"{current_summary}\n\n[LLM_UNAVAILABLE: Could not refine project understanding due to missing API key. The above understanding is based on previous information only.]"
 
     print(f"--- Calling LLM for Project Understanding Refinement. ---")
     print(f"  Current Summary: '{current_summary[:100]}...'")
     # Format questions for the prompt
-    formatted_questions = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions_asked)])
-    print(f"  Questions Asked:\n{formatted_questions}")
+    formatted_questions = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions_asked) if not q.startswith("LLM_") and not q.startswith("UNEXPECTED_")]) # Filter out error placeholders
+    if not formatted_questions and any(q.startswith("LLM_") or q.startswith("UNEXPECTED_") for q in questions_asked):
+        formatted_questions = "No valid questions were previously generated due to an error."
+    elif not formatted_questions:
+         formatted_questions = "No specific questions were previously asked or they were not recorded."
+
+
+    print(f"  Questions Asked (for context):\n{formatted_questions}")
     print(f"  User Answers: '{user_answers[:100]}...'")
 
     try:
@@ -219,61 +256,103 @@ def refine_project_understanding(current_summary: str, questions_asked: List[str
         print(f"--- LLM Response for Refined Summary: ---\n{revised_summary[:300]}...")
         return revised_summary
 
-    except APIError as e:
+    except AuthenticationError as e:
+        print(f"ERROR: OpenAI AuthenticationError during understanding refinement: {e}.")
+        return f"{current_summary}\n\n[LLM_AUTH_ERROR: Authentication failed. Could not refine project understanding.]"
+    except RateLimitError as e:
+        print(f"ERROR: OpenAI RateLimitError during understanding refinement: {e}.")
+        return f"{current_summary}\n\n[LLM_RATE_LIMIT_ERROR: Rate limit exceeded. Could not refine project understanding.]"
+    except (APITimeoutError, APIConnectionError) as e:
         error_type = type(e).__name__
-        print(f"OpenAI API Error during understanding refinement LLM call ({error_type}): {e}")
-        return current_summary # Fallback to original summary
-    except Exception as e:
+        print(f"ERROR: OpenAI {error_type} during understanding refinement: {e}.")
+        return f"{current_summary}\n\n[LLM_CONNECTION_ERROR: {error_type}. Could not refine project understanding.]"
+    except APIError as e: # Catch other/general OpenAI API errors
+        error_type = type(e).__name__
+        print(f"ERROR: OpenAI APIError ({error_type}) during understanding refinement: {e}.")
+        return f"{current_summary}\n\n[LLM_API_ERROR: {error_type}. Could not refine project understanding.]"
+    except Exception as e: # Catch other unexpected errors
         error_type = type(e).__name__
         module = getattr(type(e), '__module__', '')
-        if 'langchain' in module:
-            print(f"LangChain related error during understanding refinement LLM call ({error_type}): {e}")
-        else:
-            print(f"An unexpected error occurred during understanding refinement LLM call ({error_type}): {e}")
-        return current_summary # Fallback to original summary
+        print(f"ERROR: An unexpected error ({error_type} in '{module}') occurred during understanding refinement: {e}")
+        return f"{current_summary}\n\n[UNEXPECTED_ERROR: {error_type}. Could not refine project understanding.]"
 
 
 if __name__ == '__main__':
-    print("Testing BRD generation function...")
-    # Simplified main guard for direct testing of generate_initial_brd_sections
-    # The full main.py handles .env loading now.
+    # Standard library import for JSON parsing
+    import json
+
+    print("--- Testing BRD Agent Functions ---")
+    # The .env loading should ideally be handled by the main entry point of the application (e.g., main.py)
+    # For direct script testing, ensure .env is loaded if you rely on it here.
+    # For this test, we'll explicitly check for the API key.
+
     api_key_present = bool(os.getenv("OPENAI_API_KEY"))
     print(f"OpenAI API Key Present: {api_key_present}")
-
     if not api_key_present:
-        print("OPENAI_API_KEY not found. `generate_initial_brd_sections` will return placeholder.")
-        print("Skipping `get_clarification_questions` and `refine_project_understanding` tests as they require LLM.")
-    else:
-        print("\nTesting clarification question generation...")
-        summary_test_cq = "The user wants a new e-commerce platform."
-        utterance_test_cq = "It should sell books and support credit card payments. We need to target young adults."
-        questions = get_clarification_questions(summary_test_cq, utterance_test_cq)
-        if questions:
-            print("Generated Clarification Questions:")
-            for q_idx, q_text in enumerate(questions):
-                print(f"- {q_text}")
+        print("WARNING: OPENAI_API_KEY not found. LLM-dependent tests will show placeholder/error messages.")
 
-            print("\nTesting project understanding refinement...")
-            # Simulate some answers
-            answers_test = "1. The primary goal is to increase online book sales by 20% within the first year. 2. Yes, Stripe for payments."
-            if len(questions) > 2 : # if LLM gave 3 questions, provide a generic 3rd answer
-                answers_test += " 3. We also need a mobile app for iOS and Android."
+    print("\n--- Test: generate_initial_brd_sections ---")
+    sample_input_brd = "Develop an AI-powered chatbot for customer service that can handle product returns and answer FAQs."
+    brd_output = generate_initial_brd_sections(sample_input_brd)
+    print("\nOutput from generate_initial_brd_sections:")
+    print(brd_output)
+
+    # Only run LLM-dependent tests if API key is present
+    if api_key_present:
+        print("\n--- Test: get_clarification_questions (API Key Present) ---")
+        summary_test_cq = "The user wants a new e-commerce platform. It should sell books."
+        utterance_test_cq = "We also need to support credit card payments and target young adults."
+
+        print(f"\nSimulating get_clarification_questions with summary: '{summary_test_cq}' and utterance: '{utterance_test_cq}'")
+        questions = get_clarification_questions(summary_test_cq, utterance_test_cq)
+
+        if questions and not any(q.startswith("LLM_") or q.startswith("UNEXPECTED_") or q.startswith("Unparsed response") for q in questions):
+            print("\nGenerated Clarification Questions (Success):")
+            for q_idx, q_text in enumerate(questions):
+                print(f"  {q_idx+1}. {q_text}")
+
+            print("\n--- Test: refine_project_understanding (API Key Present, using above questions) ---")
+            # Simulate some answers based on the number of questions asked
+            answers_parts = []
+            for i in range(len(questions)):
+                answers_parts.append(f"Answer to question {i+1} would be here.")
+            answers_test = " ".join(answers_parts)
+            if not answers_test: answers_test = "User provided comprehensive answers to all questions."
+
 
             refined_summary = refine_project_understanding(
-                current_summary=utterance_test_cq, # Using utterance as initial summary for this test flow
+                current_summary=summary_test_cq + " " + utterance_test_cq, # Combine initial parts for summary
                 questions_asked=questions,
                 user_answers=answers_test
             )
-            print(f"\nInitial Summary was: {utterance_test_cq}")
+            print(f"\nInitial combined summary was: {summary_test_cq} {utterance_test_cq}")
             print(f"Refined Summary is: {refined_summary}")
 
-        elif not questions: # Handles empty list specifically
-             print("LLM indicated no clarification questions are needed for the initial input.")
-        # else case for unexpected type from get_clarification_questions is not strictly needed due to type hints
+        elif any(q.startswith("LLM_UNAVAILABLE") for q in questions):
+            print("\nClarification Questions: LLM was unavailable (as expected if API key was missing despite outer check).")
+        elif any(q.startswith("LLM_") or q.startswith("UNEXPECTED_") for q in questions):
+            print(f"\nClarification Questions: Received an error message from LLM call: {questions[0]}")
+        elif any(q.startswith("Unparsed response") for q in questions):
+            print(f"\nClarification Questions: Could not parse LLM response, received: {questions[0]}")
+        else: # Handles empty list specifically or other non-error cases
+             print("\nClarification Questions: LLM indicated no clarification questions are needed or parsing yielded no questions.")
+    else:
+        print("\n--- Test: get_clarification_questions (API Key Missing) ---")
+        # Test the behavior when LLM is not available
+        questions_no_api = get_clarification_questions("Test summary", "Test utterance")
+        print("\nOutput from get_clarification_questions (API Key Missing):")
+        if questions_no_api and questions_no_api[0].startswith("LLM_UNAVAILABLE"):
+            print(f"  Success: Received expected message: {questions_no_api[0]}")
+        else:
+            print(f"  Unexpected output: {questions_no_api}")
+
+        print("\n--- Test: refine_project_understanding (API Key Missing) ---")
+        refined_summary_no_api = refine_project_understanding("Initial summary.", ["Q1?"], "Answer1.")
+        print("\nOutput from refine_project_understanding (API Key Missing):")
+        if "[LLM_UNAVAILABLE:" in refined_summary_no_api:
+            print(f"  Success: Received expected message in summary: \n{refined_summary_no_api}")
+        else:
+            print(f"  Unexpected output: {refined_summary_no_api}")
 
 
-    sample_input_for_test = "Develop an AI-powered chatbot for customer service that can handle product returns and answer FAQs."
-    brd_output = generate_initial_brd_sections(sample_input_for_test)
-    print("\n--- generate_initial_brd_sections Output ---")
-    print(brd_output)
-    print("--- End of Test ---")
+    print("\n--- End of BRD Agent Function Tests ---")
