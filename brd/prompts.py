@@ -231,10 +231,9 @@ Remember to show your reasoning process transparently if assumptions are made.
 Output only the requested BRD sections in Markdown format.
 """
 
-# Placeholder for other prompts if needed in the future
-# e.g., CLARIFICATION_PROMPT_TEMPLATE = "..." # This will be replaced by the new template
-# e.g., GENERATION_PROMPT_TEMPLATE = "..."
-
+# CLARIFICATION_QUESTIONS_TEMPLATE:
+# Used by the agent to formulate questions if the current understanding is insufficient.
+# It instructs the LLM to output questions in a JSON list format or "NO_QUESTIONS_NEEDED".
 CLARIFICATION_QUESTIONS_TEMPLATE = """
 You are operating as "StrataBRD Pro" (as defined in the STRATA_BRD_PRO_PERSONA).
 Your task is to determine if there is sufficient detail to draft a comprehensive 14-section Business Requirements Document (BRD) based on the provided information.
@@ -256,18 +255,18 @@ Consider the information needed to adequately populate all 14 sections of the BR
 **Output Instructions:**
 
 *   **If the combined information from the summary and the latest utterance seems INSUFFICIENT** to draft a reasonably detailed 14-section BRD, formulate 1 to 3 specific, targeted, and open-ended questions. These questions should aim to clarify critical missing information necessary for creating the BRD. Focus on questions that will help fill significant gaps. Do NOT ask for information already clearly present.
-    Output *only* the questions, as a numbered list.
-    Example:
-    1. What are the primary business objectives this project aims to achieve?
-    2. Could you describe the target users for this solution?
-    3. Are there any known integrations with existing systems that will be required?
+    **IMPORTANT**: Output *only* a JSON-formatted list of strings, where each string is a question.
+    For example: `["What are the primary business objectives this project aims to achieve?", "Could you describe the target users for this solution?", "Are there any known integrations with existing systems that will be required?"]`
 
 *   **If the combined information appears SUFFICIENT** to proceed with drafting a comprehensive 14-section BRD (even if some minor details might still be inferred or elaborated upon during the drafting process), then respond with the exact phrase:
     NO_QUESTIONS_NEEDED
 
-Do not add any preamble, explanation, or closing remarks to your response. Only output the numbered questions or the "NO_QUESTIONS_NEEDED" marker.
+**CRITICAL**: Your entire response must be *either* the JSON list of questions *or* the string "NO_QUESTIONS_NEEDED". Do not include any other text, preamble, explanation, or formatting outside of the JSON structure if providing questions.
 """
 
+# REFINE_UNDERSTANDING_TEMPLATE:
+# Used by the agent to synthesize the current project summary, questions asked,
+# and user's answers into a new, coherent project summary.
 REFINE_UNDERSTANDING_TEMPLATE = """
 You are operating as "StrataBRD Pro" (as defined in the STRATA_BRD_PRO_PERSONA).
 Your task is to synthesize information to create an updated, coherent project summary.

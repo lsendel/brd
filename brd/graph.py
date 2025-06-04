@@ -50,30 +50,43 @@ def start_node(state: AgentState) -> AgentState:
     state['clarification_questions_needed'] = False
     state['clarification_questions'] = []
     # New fields for clarification loop
-    state['current_understanding'] = state.get('userInput', '') # Initialize with the first input
-    state['max_clarification_rounds'] = 3
-    state['current_clarification_round'] = 0
-    state['clarification_questions_pending_answer'] = False # Initialize flag
-    state['route_condition'] = "" # Initialize routing condition
-    print(f"Initial state after start_node: {state}")
+    state['current_understanding'] = state.get('current_understanding', state.get('userInput', '')) # Prioritize existing understanding
+    # Max clarification rounds: Use value from input state if provided, otherwise default to 3.
+    state['max_clarification_rounds'] = state.get('max_clarification_rounds', 3)
+    state['current_clarification_round'] = state.get('current_clarification_round', 0)
+    state['clarification_questions_pending_answer'] = state.get('clarification_questions_pending_answer', False)
+    state['route_condition'] = "" # Initialize routing condition for this run
+
+    print(f"--- Start Node ---")
+    print(f"  Initial userInput: '{state.get('userInput', 'N/A')[:100]}...'")
+    print(f"  Initial current_understanding: '{state.get('current_understanding', 'N/A')[:100]}...'")
+    print(f"  Max clarification rounds: {state['max_clarification_rounds']}")
+    # print(f"  Initial messages count: {len(state.get('messages', []))}") # Less critical for node execution log
+    # if state.get('messages'):
+    #     for i, msg in enumerate(state['messages']):
+    #         print(f"    Msg {i}: Type: {type(msg).__name__}, Content: '{str(msg.content)[:100]}...'")
     return state
+
 
 def analyze_input_node(state: AgentState) -> AgentState:
     """
-    Analyzes the current understanding and latest user utterance to determine
-    if clarification questions are needed.
+    Analyzes current understanding and latest user utterance to determine if clarification is needed.
+    Sets 'clarification_questions_needed', 'clarification_questions', and 'route_condition'.
     """
-    print("--- Executing Analyze Input Node ---")
+    print(f"\n--- Executing Analyze Input Node (Round {state.get('current_clarification_round', 0)}) ---")
 
     current_round = state.get('current_clarification_round', 0)
     max_rounds = state.get('max_clarification_rounds', 3)
 
+    print(f"  Current round: {current_round}, Max rounds: {max_rounds}")
+
     if current_round >= max_rounds:
-        print(f"Clarification round limit reached ({current_round}/{max_rounds}). Proceeding without further questions.")
+        print(f"  INFO: Clarification round limit reached. Proceeding to generation.")
         state['clarification_questions_needed'] = False
         state['clarification_questions'] = []
-        # Optionally, add an AIMessage indicating this
-        # state['messages'].append(AIMessage(content="Clarification round limit reached. Proceeding with BRD generation based on current understanding."))
+        if not any("Clarification round limit reached" in msg.content for msg in state.get('messages', []) if isinstance(msg, AIMessage)):
+             state['messages'].append(AIMessage(content="Clarification round limit reached. Proceeding with BRD generation based on current understanding."))
+        state['route_condition'] = "proceed_to_generation"
         return state
 
     summary_for_questions = state.get('current_understanding', '')
@@ -81,176 +94,211 @@ def analyze_input_node(state: AgentState) -> AgentState:
 
     if current_round == 0:
         latest_utterance = state.get('userInput', '')
+        print(f"  INFO: First round. Using initial userInput for questions: '{latest_utterance[:100]}...'")
     else:
-        # Find the last HumanMessage for subsequent rounds
         if state.get('messages'):
             for message in reversed(state['messages']):
                 if isinstance(message, HumanMessage):
-                    # Avoid re-using the very first userInput if it's the only human message and round > 0
-                    # This logic might need refinement based on how answers are added to messages.
-                    # For now, assume any HumanMessage after round 0 is an answer.
-                    if message.content != state.get('userInput') or len(state['messages']) > 1 : # ensure it's not the initial input again unless it's the only message
-                        latest_utterance = message.content
-                        break
-        if not latest_utterance: # Fallback if no suitable human message found (should be rare)
-             print("Warning: No distinct latest user utterance found for clarification analysis after round 0. Using current understanding as utterance.")
+                    latest_utterance = message.content
+                    print(f"  INFO: Subsequent round. Using last HumanMessage (answers) for questions: '{latest_utterance[:100]}...'")
+                    break
+        if not latest_utterance:
+             print("  WARNING: No distinct latest user utterance (HumanMessage) for clarification analysis after round 0. Using current_understanding.")
              latest_utterance = summary_for_questions
 
+    if not summary_for_questions and not latest_utterance: # Should be rare if userInput is captured
+        print("  ERROR: Both current_understanding and latest_utterance are empty. Cannot generate questions.")
+        state['clarification_questions_needed'] = False
+        state['clarification_questions'] = []
+        state['messages'].append(AIMessage(content="INTERNAL ERROR: Missing context to formulate clarification questions."))
+        state['route_condition'] = "end_due_to_error"
+        return state
 
-    print(f"Calling get_clarification_questions with (Round {current_round}):")
-    print(f"  Summary for questions: '{summary_for_questions[:200]}...'")
-    print(f"  Latest utterance: '{latest_utterance[:200]}...'")
-
+    print(f"  INFO: Calling agent to get clarification questions...")
     questions = get_clarification_questions(
         current_project_summary=summary_for_questions,
         latest_user_utterance=latest_utterance
     )
+    print(f"  INFO: Agent returned questions: {questions}")
 
-    print(f"Received questions from LLM: {questions}")
-
-    if questions:
-        state['clarification_questions_needed'] = True
-        state['clarification_questions'] = questions
-        # current_clarification_round is incremented by the node that processes answers or by a dedicated update node.
-        # For now, if questions are asked, we assume the graph will route to ask them.
-        # The actual increment should happen *after* questions are successfully asked and answers are received.
-    else:
+    if questions and any(q.startswith("LLM_") or q.startswith("UNEXPECTED_") or q.startswith("Unparsed response") for q in questions):
+        error_detail = questions[0] if questions else "Unknown agent error."
+        print(f"  ERROR: Agent returned an error instead of questions: {error_detail}")
+        state['messages'].append(AIMessage(content=f"Agent Error: Could not retrieve clarification questions. Details: {error_detail}"))
         state['clarification_questions_needed'] = False
         state['clarification_questions'] = []
-
-    print(f"State after analyze_input_node: {state}")
+        state['route_condition'] = "proceed_to_generation" # Proceed, BRD might reflect this error state
+    elif questions:
+        print(f"  INFO: Clarification questions generated: {questions}")
+        state['clarification_questions_needed'] = True
+        state['clarification_questions'] = questions
+        state['route_condition'] = "ask_clarification"
+    else:
+        print("  INFO: No clarification questions needed or returned by LLM.")
+        state['clarification_questions_needed'] = False
+        state['clarification_questions'] = []
+        state['route_condition'] = "proceed_to_generation"
     return state
+
 
 def generate_brd_node(state: AgentState) -> AgentState:
     """
-    Generates the BRD content using the agent's core logic.
-    This node is called when the input is deemed sufficient, either initially
-    or after a clarification cycle.
+    Generates BRD content using the current understanding.
+    Updates 'current_brd_content' and appends an AIMessage with the BRD or error.
     """
-    print("--- Executing Generate BRD Node ---")
+    print("\n--- Executing Generate BRD Node ---")
 
-    # Determine the most relevant input for BRD generation.
-    # Prioritize 'current_understanding', then 'userInput', then a default.
-    user_input_for_brd = state.get('current_understanding')
-    if not user_input_for_brd: # Check if None or empty string
-        user_input_for_brd = state.get('userInput')
-    if not user_input_for_brd: # Check again if still None or empty
-        user_input_for_brd = "Default fallback: No specific input or understanding provided for BRD generation."
+    user_input_for_brd = state.get('current_understanding', state.get('userInput', ''))
+    if not user_input_for_brd:
+        print("  WARNING: No input or understanding available for BRD generation. Using placeholder.")
+        user_input_for_brd = "No specific input or understanding was available for BRD generation."
 
-    print(f"Input for BRD generation (from current_understanding or fallback): {user_input_for_brd[:100]}...")
+    print(f"  Input for BRD generation: '{user_input_for_brd[:100]}...'")
     brd_content = generate_initial_brd_sections(user_input_for_brd)
     state["current_brd_content"] = brd_content
-    state["messages"].append(AIMessage(content=f"Generated BRD (Partial):\n{brd_content}"))
-    print(f"State after generate_brd_node: {state}")
+
+    if "ERROR:" in brd_content or "Error:" in brd_content:
+        print(f"  ERROR: Agent returned an error during BRD generation: {brd_content}")
+        state["messages"].append(AIMessage(content=f"Could not generate BRD. Details: {brd_content}"))
+    else:
+        state["messages"].append(AIMessage(content=f"Generated BRD (Partial):\n{brd_content}"))
     return state
+
 
 def clarification_node(state: AgentState) -> AgentState:
     """
-    Formats and presents clarification questions to the user.
-    In a full loop, the graph would then wait for user's answers.
+    Presents clarification questions to the user or informs if errors occurred.
+    Sets 'clarification_questions_pending_answer' to True if valid questions are asked.
     """
-    print("--- Executing Clarification Node ---")
-    if not state.get('clarification_questions'):
-        # This case should ideally not be reached if conditional logic is correct
-        state['messages'].append(AIMessage(content="I need more details, but no specific questions were formulated."))
+    print(f"\n--- Executing Clarification Node (Round {state.get('current_clarification_round', 0)}) ---")
+
+    current_questions = state.get('clarification_questions', [])
+    if not current_questions: # Should be prevented by analyze_input_node's routing
+        print("  WARNING: Clarification Node called but no questions in state. Proceeding.")
+        ai_message = "I was about to ask for more details, but I don't have any specific questions right now. Let's continue."
+        if not any(msg.content == ai_message for msg in state.get('messages', [])): # Avoid duplicate messages
+            state['messages'].append(AIMessage(content=ai_message))
+        state['clarification_questions_pending_answer'] = False
         return state
 
-    questions_formatted = "\n".join([f"{i+1}. {q}" for i, q in enumerate(state['clarification_questions'])])
-    message_to_user = f"To ensure I create the best possible BRD for you, I have a few clarifying questions:\n{questions_formatted}\nPlease provide your answers."
-    state['messages'].append(AIMessage(content=message_to_user))
+    # analyze_input_node is responsible for adding agent errors to messages.
+    # This node just checks if the questions are actual questions or error placeholders.
+    if any(q.startswith("LLM_") or q.startswith("UNEXPECTED_") or q.startswith("Unparsed response") for q in current_questions):
+        print(f"  INFO: Clarification questions list contains error/info messages from agent: {current_questions[0]}")
+        # Error message already added by analyze_input_node. Ensure we don't expect an answer.
+        state['clarification_questions_pending_answer'] = False
+        return state
 
-    # In a real clarification loop:
-    # 1. The graph would effectively pause here, awaiting the next HumanMessage.
-    # 2. The main.py (or calling application) would collect user's answers and reinvoke the graph
-    #    with the new HumanMessage appended.
-    # 3. An edge would lead from here to a new node, e.g., 'process_clarification_answers_node'.
-    state['clarification_questions_pending_answer'] = True # Set flag before ending
-    print(f"State after clarification_node: {state}")
+    questions_formatted = "\n".join([f"{i+1}. {q}" for i, q in enumerate(current_questions)])
+    message_to_user = (f"To ensure I create the best possible BRD for you, I have a few clarifying questions:\n"
+                       f"{questions_formatted}\nPlease provide your answers.")
+
+    print(f"  Asking valid questions:\n{questions_formatted}")
+    state['messages'].append(AIMessage(content=message_to_user))
+    state['clarification_questions_pending_answer'] = True
     return state
+
 
 def process_clarification_answers_node(state: AgentState) -> AgentState:
     """
-    Processes the user's answers to clarification questions and refines
-    the project understanding.
+    Processes user's answers, refines understanding, and increments clarification round.
+    Updates 'current_understanding', clears 'clarification_questions',
+    and resets 'clarification_questions_pending_answer'.
     """
-    print("--- Executing Process Clarification Answers Node ---")
+    print(f"\n--- Executing Process Clarification Answers Node (Round {state.get('current_clarification_round', 0)}) ---")
 
     user_answers_text = ""
     if state.get('messages') and isinstance(state['messages'][-1], HumanMessage):
         user_answers_text = state['messages'][-1].content
+        print(f"  Found user answers: '{user_answers_text[:100]}...'")
     else:
-        print("Warning: Last message is not a HumanMessage or no messages found. Cannot process answers.")
-        # Keep current understanding and increment round to avoid getting stuck if something is wrong.
-        state['current_clarification_round'] = state.get('current_clarification_round', 0) + 1
-        state['clarification_questions'] = [] # Clear old questions
-        state['clarification_questions_needed'] = False # Will be re-evaluated
-        return state
-
-    questions_just_answered = state.get('clarification_questions', [])
-    if not questions_just_answered:
-        print("Warning: No clarification questions found in state to process answers against.")
-        # This might happen if graph is entered incorrectly.
-        # Increment round and clear questions.
-        state['current_clarification_round'] = state.get('current_clarification_round', 0) + 1
+        print("  ERROR: Last message is not HumanMessage or no messages found. Cannot process answers.")
+        state['messages'].append(AIMessage(content="It seems I was expecting your answers, but I couldn't find them. This might affect the BRD quality."))
+        state['current_clarification_round'] = state.get('current_clarification_round', 0) + 1 # Increment to avoid loop
+        state['clarification_questions_pending_answer'] = False
         state['clarification_questions'] = []
-        state['clarification_questions_needed'] = False
+        state['route_condition'] = "analyze"
         return state
 
-    print(f"Processing answers: '{user_answers_text[:200]}...' for questions: {questions_just_answered}")
+    questions_that_were_asked = state.get('clarification_questions', [])
+    if not questions_that_were_asked: # Should ideally not happen if answers are present
+        print("  WARNING: No 'clarification_questions' in state to process answers against. Refining based on general input.")
+        current_sum = state.get('current_understanding', state.get('userInput',''))
+        new_understanding = refine_project_understanding(
+            current_summary=current_sum,
+            questions_asked=[], # No specific questions recorded for this refinement
+            user_answers=user_answers_text
+        )
+    else:
+        print(f"  Processing answers for questions: {questions_that_were_asked}")
+        new_understanding = refine_project_understanding(
+            current_summary=state['current_understanding'],
+            questions_asked=questions_that_were_asked,
+            user_answers=user_answers_text
+        )
 
-    new_understanding = refine_project_understanding(
-        current_summary=state['current_understanding'],
-        questions_asked=questions_just_answered,
-        user_answers=user_answers_text
-    )
-    print(f"Old understanding: '{state['current_understanding'][:200]}...'")
-    state['current_understanding'] = new_understanding
-    print(f"New understanding: '{state['current_understanding'][:200]}...'")
+    if "[LLM_" in new_understanding or "[UNEXPECTED_ERROR" in new_understanding:
+        print(f"  ERROR: Refinement of understanding returned an error: {new_understanding}")
+        state['messages'].append(AIMessage(content=f"Agent Error: Could not refine project understanding. Details: {new_understanding}"))
+        # current_understanding remains the old one in this case
+    else:
+        print(f"  Old understanding: '{state['current_understanding'][:100]}...'")
+        state['current_understanding'] = new_understanding
+        print(f"  New understanding: '{state['current_understanding'][:100]}...'")
 
     state['current_clarification_round'] = state.get('current_clarification_round', 0) + 1
-    state['clarification_questions'] = [] # Clear the questions that were just answered
-    state['clarification_questions_needed'] = False # Will be re-evaluated by analyze_input
-    state['clarification_questions_pending_answer'] = False # Reset flag
+    print(f"  Incremented clarification round to: {state['current_clarification_round']}")
 
-    print(f"State after process_clarification_answers_node: {state}")
+    state['clarification_questions'] = []
+    state['clarification_questions_needed'] = False
+    state['clarification_questions_pending_answer'] = False
+    state['route_condition'] = "analyze"
     return state
 
-# --- Routing and Conditional Edges ---
 
 def route_after_start_node(state: AgentState) -> AgentState:
     """
-    Determines the initial routing based on whether clarification answers are pending.
-    This node updates 'route_condition' in the state.
+    Determines initial routing based on whether answers are pending from a previous session.
+    Updates 'route_condition' in the state: "process_answers" or "analyze".
     """
-    print("--- Executing Route After Start Node ---")
-    if state.get('clarification_questions_pending_answer', False):
-        # Check if the last message is indeed a HumanMessage (i.e., an answer)
-        if state.get('messages') and isinstance(state['messages'][-1], HumanMessage):
-            print("Decision: Answers pending and last message is Human. Routing to 'process_answers'.")
-            state['route_condition'] = "process_answers"
-        else:
-            # This case should ideally not happen if main.py logic is correct (sends answers as HumanMessage)
-            # Or if it's the very first run after questions were asked but graph re-invoked without new human message
-            print("Warning: Answers were pending, but last message is not Human. Defaulting to 'analyze'.")
-            state['route_condition'] = "analyze"
-    else:
-        print("Decision: No answers pending. Routing to 'analyze'.")
-        state['route_condition'] = "analyze"
+    print(f"\n--- Executing Route After Start Node ---")
+    pending_answers = state.get('clarification_questions_pending_answer', False)
+    # Check if the last message is Human AND there are messages.
+    last_message_is_human = bool(state.get('messages') and isinstance(state['messages'][-1], HumanMessage))
 
-    print(f"State after route_after_start_node: {state}")
+    print(f"  Pending answers flag: {pending_answers}, Last message is Human: {last_message_is_human}")
+
+    if pending_answers and last_message_is_human:
+        print("  DECISION: Answers were pending, and last message is Human. Routing to 'process_answers'.")
+        state['route_condition'] = "process_answers"
+    elif pending_answers and not last_message_is_human:
+        print("  WARNING: Answers were pending, but last message is NOT Human. Routing to 'analyze' (may re-ask or end).")
+        state['route_condition'] = "analyze"
+    else: # No answers pending
+        print("  DECISION: No answers pending. Routing to 'analyze'.")
+        state['route_condition'] = "analyze"
     return state
+
 
 def should_ask_for_clarification(state: AgentState) -> str:
     """
-    Determines the next step after input analysis based on whether clarification is needed.
+    Determines next step after input analysis based on 'route_condition' from `analyze_input_node`.
+    Possible outcomes: "ask_clarification", "proceed_to_generation", "end_due_to_error".
     """
-    print("--- Conditional Edge: Checking if clarification is needed ---")
-    if state.get('clarification_questions_needed', False) and state.get('clarification_questions'):
-        print("Decision: Clarification needed. Routing to 'ask_clarification_questions'.")
+    print(f"\n--- Conditional Edge: Evaluating 'route_condition' from analyze_input_node ---")
+    route = state.get('route_condition', 'proceed_to_generation') # Default robustly
+    print(f"  Route condition from state: '{route}'")
+
+    if route == "ask_clarification":
+        print("  DECISION: Routing to 'ask_clarification_questions'.")
         return "ask_clarification"
-    else:
-        print("Decision: No clarification needed. Routing to 'generate_brd'.")
-        return "proceed_to_generation"
+    elif route == "end_due_to_error":
+        print("  DECISION: Routing to END due to error in analyze_input_node.")
+        return "end_due_to_error"
+    # Default to generation if condition is not explicitly 'ask_clarification' or 'end_due_to_error'
+    print("  DECISION: Routing to 'generate_brd'.")
+    return "proceed_to_generation"
+
 
 # --- Graph Definition ---
 def create_graph():
@@ -289,7 +337,8 @@ def create_graph():
         should_ask_for_clarification, # This is the function that returns the key for the map
         {
             "ask_clarification": "ask_clarification_questions",
-            "proceed_to_generation": "generate_brd"
+            "proceed_to_generation": "generate_brd",
+            "end_due_to_error": END # New edge for error condition
         }
     )
 
@@ -298,6 +347,7 @@ def create_graph():
     # ask_clarification_questions now also correctly goes to END, as the main loop
     # in main.py will handle collecting input and re-invoking the graph.
     workflow.add_edge("ask_clarification_questions", END)
+    # No explicit edge needed for "end_due_to_error" as it's handled by the conditional edge above.
 
     # Compile the graph
     app = workflow.compile()
@@ -336,13 +386,87 @@ if __name__ == '__main__':
     # Since we are manually setting, we might want to start graph from after analyze_input
     # or ensure analyze_input doesn't overwrite these if called.
     # For this simple if __name__ test, we'll just invoke directly.
-    # The 'analyze_input' node will run and currently will reset clarification_questions_needed to False.
-    # So, this test won't show the clarification path unless analyze_input_node is modified for testing.
 
-    # To properly test this path in isolation, you might call a subgraph or specific nodes.
-    # For now, this just shows the intent.
-    print("Note: analyze_input_node currently overrides clarification_needed. Modify it to test this path.")
-    # final_state_2 = app.invoke(initial_state_2) # This will not show clarification due to analyze_input_node's current behavior
-    # print(f"Final state 2 (conceptual): {final_state_2.get('messages', [])[-1].content if final_state_2.get('messages') else 'No messages'}")
+    # This test case needs careful setup due to how state is managed.
+    # For now, we'll focus on testing max_clarification_rounds override.
+    initial_state_2 = {
+        "userInput": "Another vague idea.",
+        "messages": [],
+        "max_clarification_rounds": 1 # Override max rounds
+    }
+    print("\n--- Test Case 2: Override max_clarification_rounds ---")
+    # Stream events to see node execution
+    final_state_2 = None
+    for event in app.stream(initial_state_2, {"recursion_limit": 10}): # Increased recursion limit for potential loops
+        print(f"Event for Test Case 2: {event}")
+        if event.get(END): # If an END event is found
+            final_state_2 = event[END].get('__values__') # LangGraph structure for final state at END
+        print("---")
 
-    print("\nGraph structure reviewed. Further implementation of node logic (especially analyze_input and clarification loop) is pending.")
+    if final_state_2:
+        print(f"Final state 2 (max_clarification_rounds=1):")
+        print(f"  Messages: {[msg.content for msg in final_state_2.get('messages', [])]}")
+        print(f"  BRD Content: {final_state_2.get('current_brd_content')}")
+        print(f"  Clarification round: {final_state_2.get('current_clarification_round')}")
+        print(f"  Max rounds in state: {final_state_2.get('max_clarification_rounds')}")
+    else:
+        # If END was not reached or state not captured properly (e.g. graph error before END)
+        # Try invoking to get the last known state, though this might re-run things.
+        # This part is more for debugging the test itself.
+        print("Warning: END event not explicitly captured for final state in Test Case 2 stream. Invoking for final snapshot.")
+        final_state_2_invoke = app.invoke(initial_state_2, {"recursion_limit": 10})
+        if final_state_2_invoke:
+             print(f"Final state 2 (invoke) (max_clarification_rounds=1):")
+             print(f"  Messages: {[msg.content for msg in final_state_2_invoke.get('messages', [])]}")
+             print(f"  BRD Content: {final_state_2_invoke.get('current_brd_content')}")
+             print(f"  Clarification round: {final_state_2_invoke.get('current_clarification_round')}")
+             print(f"  Max rounds in state: {final_state_2_invoke.get('max_clarification_rounds')}")
+
+
+    # Test Case 3: Simulating an error from agent (e.g., LLM unavailable)
+    print("\n--- Test Case 3: Simulate LLM Error during BRD generation ---")
+    # To test this, we need to ensure `generate_initial_brd_sections` returns an error string
+    # when OPENAI_API_KEY is missing. This is handled by brd.agent.py.
+    # We assume the key is NOT set for this test to be meaningful for error propagation.
+    initial_state_3 = {
+        "userInput": "Test input for LLM error.",
+        "messages": [],
+        "current_understanding": "Test input for LLM error." # Ensure this is used
+    }
+    # Temporarily remove API key for this specific test if it's set in environment
+    original_api_key = os.environ.pop("OPENAI_API_KEY", None)
+
+    # Re-create graph with potentially no LLM in agent
+    # This is a bit heavy for a unit test, ideally mock agent functions.
+    # For now, we rely on the actual agent.py behavior.
+    app_for_error_test = create_graph() # Re-compile to reflect no API key if llm is None
+
+    final_state_3 = None
+    print("Invoking graph, expecting error message in AIMessage if API key is indeed missing...")
+    for event in app_for_error_test.stream(initial_state_3, {"recursion_limit": 5}):
+        print(f"Event for Test Case 3: {event}")
+        if event.get(END):
+            final_state_3 = event[END].get('__values__')
+        print("---")
+
+    if final_state_3 and final_state_3.get('messages'):
+        last_message = final_state_3['messages'][-1]
+        print(f"Last message content from Test Case 3: {last_message.content}")
+        if isinstance(last_message, AIMessage) and "ERROR: LLM NOT AVAILABLE" in last_message.content:
+            print("SUCCESS: Correctly propagated LLM unavailability error as AIMessage.")
+        elif isinstance(last_message, AIMessage) and "Error:" in last_message.content:
+             print(f"PARTIAL SUCCESS: AIMessage contains an error, but not the expected LLM_UNAVAILABLE one. Content: {last_message.content}")
+        else:
+            print(f"FAILURE: Last message was not an AIMessage with the expected error. Message: {last_message}")
+    else:
+        print("FAILURE: No messages found in final state for Test Case 3 or END not reached.")
+
+    # Restore API key if it was removed
+    if original_api_key:
+        os.environ["OPENAI_API_KEY"] = original_api_key
+
+    # Re-compile app with original llm state
+    app = create_graph()
+
+
+    print("\n--- Graph Test Suite Complete ---")
