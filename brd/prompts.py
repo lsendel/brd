@@ -228,13 +228,23 @@ SECTIONS TO GENERATE:
     *   High-Level System Context (describe briefly based on input)
     *   Major Components (list if inferable from input)
 
-7.  **Functional Requirements** (Provide a basic list of 2-3 user stories with acceptance criteria if the input allows, otherwise a placeholder structure. Number them starting from FR-001.)
+7.  **Functional Requirements** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Provide a detailed list of user stories (at least 3-5 if input allows, or more based on complexity) with clear acceptance criteria for each. Ensure unique numbering (FR-001, FR-002, etc.).)
     *   Example:
         *   **FR-001: [User Story Title]**
             *   As a [type of user], I want [an action] so that [a benefit/value].
             *   **Acceptance Criteria:**
-                *   Criterion 1.
-                *   Criterion 2.
+                *   Criterion 1: [Description of acceptance]
+                *   Criterion 2: [Description of acceptance]
+
+8.  **Non-Functional Requirements** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Identify key non-functional aspects like Performance, Security, Usability, and Reliability based on the input. Provide a brief description for each identified NFR. Use NFR-001, NFR-002, etc. for numbering.)
+    *   NFR-001: [e.g., Performance] - [Brief description based on input]
+    *   NFR-002: [e.g., Security] - [Brief description based on input]
+
+9.  **Data Requirements** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Describe any key data entities mentioned or implied by the input. Briefly touch upon data storage or data quality if inferable. Use DR-001, DR-002, etc. for numbering if listing multiple entities.)
+    *   DR-001: [e.g., User Data] - [Brief description of data involved, potential storage considerations if obvious]
+
+10. **Integration & Interface Requirements** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Identify potential internal or external system integrations or interfaces based on the input. Briefly describe their purpose. Use INT-001, INT-002, etc. for numbering.)
+    *   INT-001: [e.g., Payment Gateway Integration] - [Brief description of purpose and interaction if inferable]
 
 Remember to show your reasoning process transparently if assumptions are made.
 Output only the requested BRD sections in Markdown format.
