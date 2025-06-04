@@ -1,18 +1,29 @@
 import os
-from brd.graph import create_graph, AgentState # Assuming AgentState is useful for constructing initial input
-from langchain_core.messages import HumanMessage, AIMessage # Added AIMessage for type checking in load
-from brd.persistence import save_project, load_project, list_projects
-import uuid # For generating unique project IDs if needed
+import os # os import was already there
+from brd.graph import create_graph, AgentState
+from langchain_core.messages import HumanMessage, AIMessage
+from brd.persistence import save_project # Removed load_project, list_projects as they'll be used via project_manager
+# import uuid # No longer needed here, moved to project_manager
+
+# Import new project management functions
+from brd.project_manager import (
+    get_available_projects_for_cli,
+    load_project_core_logic,
+    validate_project_name_for_cli,
+    sanitize_project_name,
+    generate_unique_project_id,
+    create_new_project_core_logic
+)
 
 # Attempt to load .env file for local development
 try:
     import dotenv
-    if dotenv.load_dotenv():
-        print("Loaded environment variables from .env file.")
+    if dotenv.load_dotenv(override=False): # override=False to respect existing env vars
+        print("INFO: Loaded environment variables from .env file (if present and not already set).")
     else:
-        print("INFO: No .env file found or it is empty.") # Changed to INFO for consistency
+        print("INFO: No .env file found, or it is empty, or python-dotenv not installed. Relying on globally set environment variables.")
 except ImportError:
-    print("INFO: python-dotenv not installed, .env file will not be loaded. Ensure OPENAI_API_KEY is set globally if needed.")
+    print("INFO: python-dotenv not installed. .env file will not be loaded. Ensure OPENAI_API_KEY and other required variables are set globally if needed.")
 
 
 def get_user_choice(prompt_message: str, valid_choices: list | None = None) -> str:
@@ -35,130 +46,8 @@ def get_user_choice(prompt_message: str, valid_choices: list | None = None) -> s
             else:
                 print("Input cannot be empty. Please try again or type 'exit'/'quit'.")
 
-def handle_load_project():
-    """
-    Handles the project loading logic.
-    Returns current_project_id, current_conversation_state, or None, None.
-    """
-    print("\n--- Project Management ---")
-    available_projects = list_projects()
-    if not available_projects:
-        print("No projects available to load.")
-        return None, None
-
-    print("Available projects:")
-    project_choices = {} # Maps user input (e.g., "1") to project_id
-    for i, name in enumerate(available_projects):
-        print(f"  {i + 1}. {name}")
-        project_choices[str(i + 1)] = name
-
-    prompt_msg = "Load an existing project? (Enter number, N/no to skip, or 'exit'/'quit'): "
-    valid_input_choices = list(project_choices.keys()) + ['n', 'no']
-    load_choice = get_user_choice(prompt_msg, valid_input_choices)
-
-    if load_choice in ["exit", "quit", "n", "no"]:
-        if load_choice in ["n", "no"]:
-            print("Skipping project loading.")
-        return None, None # User chose to exit or skip
-
-    current_project_id = project_choices.get(load_choice)
-    # This check should ideally be redundant if get_user_choice and valid_input_choices work.
-    if not current_project_id:
-        print("Error: Invalid project selection logic. Please report this bug.")
-        return None, None
-
-    print(f"Loading project: '{current_project_id}'...")
-    try:
-        loaded_data = load_project(current_project_id)
-        # Reconstruct AgentState from loaded_data
-        current_conversation_state: AgentState = {
-            "userInput": loaded_data.get("userInput", ""),
-            "messages": loaded_data.get("messages", []), # load_project should handle deserialization
-            "current_brd_content": loaded_data.get("current_brd_content", ""),
-            "clarification_questions_needed": loaded_data.get("clarification_questions_needed", False),
-            "clarification_questions": loaded_data.get("clarification_questions", []),
-            "current_understanding": loaded_data.get("current_understanding", loaded_data.get("userInput", "")),
-            "max_clarification_rounds": loaded_data.get("max_clarification_rounds", 3), # Default if not in saved
-            "current_clarification_round": loaded_data.get("current_clarification_round", 0),
-            "clarification_questions_pending_answer": loaded_data.get("clarification_questions_pending_answer", False),
-            "route_condition": loaded_data.get("route_condition", ""), # May not be critical to restore
-            "thread_id": loaded_data.get("thread_id")
-        }
-        print(f"Project '{current_project_id}' loaded successfully.")
-
-        if current_conversation_state.get('messages'):
-            print("\n--- Historical Messages from Loaded Project (last 5) ---")
-            for msg in current_conversation_state['messages'][-5:]:
-                if isinstance(msg, HumanMessage):
-                    print(f"  YOU: {msg.content}")
-                elif isinstance(msg, AIMessage):
-                    print(f"  AGENT: {msg.content}")
-                else: # Fallback for other types (System, Tool, etc.)
-                    print(f"  {msg.type.upper()}: {str(msg.content if hasattr(msg, 'content') else msg)}")
-            if current_conversation_state.get('clarification_questions_pending_answer'):
-                print("AGENT: (Waiting for your answers to the questions above)")
-        return current_project_id, current_conversation_state
-    except FileNotFoundError: # Raised by load_project
-        print(f"Error: Project file for '{current_project_id}' not found.")
-        return None, None
-    except ValueError as ve: # Raised by load_project for JSON decode errors
-        print(f"Error loading project '{current_project_id}': {ve}")
-        return None, None
-    except Exception as e: # Catch any other unexpected errors from load_project
-        print(f"An unexpected error occurred while loading project '{current_project_id}': {e}")
-        return None, None
-
-
-def handle_new_project(thread_id_counter: int) -> tuple[str | None, AgentState | None, dict | None, int]:
-    """
-    Handles the new project creation logic.
-    Returns current_project_id, current_conversation_state, config, and updated thread_id_counter.
-    Returns None, None, None, thread_id_counter if user exits.
-    """
-    project_input_name = get_user_choice(
-        "Enter a name for your new project (leave blank to auto-generate, or 'exit'/'quit'): "
-    )
-    if project_input_name == "exit":
-        return None, None, None, thread_id_counter
-
-    if not project_input_name: # User left it blank
-        current_project_id = f"project_{uuid.uuid4().hex[:8]}"
-        print(f"Generated project ID: {current_project_id}")
-    else:
-        # Sanitize the name for use as a filename/ID
-        current_project_id = project_input_name.replace(" ", "_").replace("/", "-").lower()
-
-    user_input_prompt = (
-        f"Project '{current_project_id}'. Enter your high-level concept or BRD idea (or 'exit'/'quit'): "
-    )
-    user_input = get_user_choice(user_input_prompt)
-
-    if user_input == "exit":
-        print("Exiting new project creation.")
-        return None, None, None, thread_id_counter
-
-    thread_id_counter += 1
-    new_thread_id = f"brd-cli-thread-{current_project_id}-{thread_id_counter}"
-    config = {"configurable": {"thread_id": new_thread_id}}
-
-    print(f"\nStarting new project: '{current_project_id}' with Thread ID: {new_thread_id}")
-
-    current_conversation_state: AgentState = {
-        "userInput": user_input,
-        "messages": [],
-        # Initialize other AgentState fields to defaults for a new project
-        "current_brd_content": "",
-        "clarification_questions_needed": False,
-        "clarification_questions": [],
-        "current_understanding": user_input, # Initial understanding is the first input
-        "max_clarification_rounds": 3, # Default, can be overridden if passed to graph
-        "current_clarification_round": 0,
-        "clarification_questions_pending_answer": False,
-        "route_condition": "",
-        "thread_id": new_thread_id # Store thread_id in state as well
-    }
-    return current_project_id, current_conversation_state, config, thread_id_counter
-
+# handle_load_project and handle_new_project functions are now moved to brd.project_manager.py
+# main.py will call them after handling CLI interactions.
 
 def main():
     # Enhanced .env loading message
@@ -189,13 +78,35 @@ def main():
         print("WARNING: Continuing without API key. Expect errors related to OpenAI API calls.")
 
     print("\nInitializing StrataBRD Pro Agent...")
+    # openai exceptions for more specific error handling if they bubble up
+    from openai import APIError, AuthenticationError, RateLimitError, APITimeoutError, APIConnectionError
+
+    print("\nInitializing StrataBRD Pro Agent...")
     try:
-        app = create_graph()
-        print("StrataBRD Pro Agent initialized successfully.")
+        app = create_graph() # This also initializes the LLM in agent.py
+        print("INFO: StrataBRD Pro Agent initialized successfully.")
         print("Welcome! Type 'exit' or 'quit' at any prompt to end the session.")
-    except Exception as e:
-        print(f"FATAL: Error initializing the agent graph: {e}")
-        print("Please check your setup and dependencies. Exiting.")
+    except AuthenticationError as e:
+        print(f"FATAL: OpenAI Authentication Error initializing the agent: {e}")
+        print("Please check your OPENAI_API_KEY. It might be invalid, missing, or expired.")
+        print("Exiting.")
+        return
+    except (APITimeoutError, APIConnectionError) as e:
+        error_type = type(e).__name__
+        print(f"FATAL: OpenAI Network Error ({error_type}) initializing the agent: {e}")
+        print("Please check your internet connection and OpenAI's service status.")
+        print("Exiting.")
+        return
+    except APIError as e: # Catch other OpenAI API errors during initialization
+        error_type = type(e).__name__
+        print(f"FATAL: OpenAI API Error ({error_type}) initializing the agent: {e}")
+        print("This could be due to various issues with the API. Check OpenAI's status or your account.")
+        print("Exiting.")
+        return
+    except Exception as e: # Catch other unexpected errors during initialization
+        print(f"FATAL: An unexpected error occurred while initializing the agent graph: {type(e).__name__} - {e}")
+        print("Please check your setup, dependencies (e.g., LangChain, OpenAI library versions), and environment variables.")
+        print("Exiting.")
         return
 
     current_project_id: str | None = None
@@ -218,52 +129,112 @@ def main():
                 break
 
             if choice == 'l':
-                project_id_to_load, loaded_state = handle_load_project()
-                if project_id_to_load and loaded_state:
-                    current_project_id = project_id_to_load
-                    current_conversation_state = loaded_state
+                project_choices = get_available_projects_for_cli()
+                if not project_choices:
+                    # Message "No projects available to load." is printed by get_available_projects_for_cli
+                    continue # To main menu
 
-                    loaded_thread_id = current_conversation_state.get("thread_id")
-                    if loaded_thread_id:
-                        config = {"configurable": {"thread_id": loaded_thread_id}}
-                        print(f"INFO: Using existing Thread ID from loaded project: {loaded_thread_id}")
+                prompt_msg = "Load an existing project? (Enter number, N/no to skip, or 'exit'/'quit'): "
+                valid_input_choices = list(project_choices.keys()) + ['n', 'no']
+                load_choice = get_user_choice(prompt_msg, valid_input_choices)
+
+                if load_choice in ["exit", "quit", "n", "no"]:
+                    if load_choice in ["n", "no"]: print("Skipping project loading.")
+                    continue # To main menu
+
+                chosen_project_id = project_choices.get(load_choice)
+                if not chosen_project_id: # Should not happen with get_user_choice validation
+                     print("Error: Invalid project selection. Returning to main menu.")
+                     continue
+
+                proj_id_loaded, conv_state_loaded = load_project_core_logic(chosen_project_id)
+
+                if proj_id_loaded and conv_state_loaded:
+                    current_project_id = proj_id_loaded
+                    current_conversation_state = conv_state_loaded # This is now an AgentState instance
+
+                    if current_conversation_state.thread_id:
+                        config = {"configurable": {"thread_id": current_conversation_state.thread_id}}
+                        print(f"INFO: Using existing Thread ID from loaded project: {current_conversation_state.thread_id}")
                     else:
+                        # This case should be less likely if projects are always saved with a thread_id
+                        # And if AgentState class ensures thread_id is initialized.
                         thread_id_counter += 1
                         new_thread_id = f"brd-cli-thread-{current_project_id}-{thread_id_counter}"
                         config = {"configurable": {"thread_id": new_thread_id}}
-                        current_conversation_state["thread_id"] = new_thread_id # Save to state
-                        print(f"WARNING: No Thread ID found in loaded project. Generated new one: {new_thread_id}")
+                        current_conversation_state.thread_id = new_thread_id # Set on the instance
+                        print(f"WARNING: No Thread ID found in loaded project state object. Generated new one: {new_thread_id}")
 
-                    if not current_conversation_state.get("messages") and \
-                       not current_conversation_state.get("clarification_questions_pending_answer"):
+                    if not current_conversation_state.messages and \
+                       not current_conversation_state.clarification_questions_pending_answer:
                         print(f"\nProject '{current_project_id}' is loaded. It seems to be at an initial state or requires new input.")
-                        user_input = get_user_choice(
+                        user_input_for_loaded = get_user_choice(
                             f"Enter your next query or concept for '{current_project_id}' (or 'exit' to return to menu): "
                         )
-                        if user_input == "exit":
+                        if user_input_for_loaded == "exit":
                             current_project_id, current_conversation_state, config = None, None, {}
                             continue
-                        current_conversation_state["userInput"] = user_input
+                        current_conversation_state.userInput = user_input_for_loaded # Set on the instance
                 else:
-                    # Loading was skipped by user ("n", "no") or failed (error message already printed by handle_load_project)
+                    # Error messages are printed by load_project_core_logic
                     print("Returning to main menu.")
-                    current_project_id, current_conversation_state, config = None, None, {}
                     continue # Loop back to show main menu
 
             elif choice == 'n':
-                proj_id, conv_state, new_config, thread_id_counter = handle_new_project(thread_id_counter)
-                if proj_id: # Project creation successful
-                    current_project_id = proj_id
-                    current_conversation_state = conv_state
-                    config = new_config
-                else: # User chose to exit during new project creation
+                new_project_id_final = None
+                while True: # Loop for project name input and validation
+                    raw_project_input = input(
+                        "Enter a name for your new project (leave blank to auto-generate, or type 'exit'/'quit'): "
+                    ).strip()
+
+                    if raw_project_input.lower() in ["exit", "quit"]:
+                        # Need to break out of the outer loop if user exits here
+                        choice = "e" # Signal exit for the outer loop
+                        break
+
+                    error_msg, valid_name_or_none = validate_project_name_for_cli(raw_project_input)
+                    if error_msg:
+                        print(error_msg)
+                        continue # Ask for project name again
+
+                    if valid_name_or_none is None: # Auto-generate
+                        new_project_id_final = generate_unique_project_id()
+                        print(f"INFO: Generated project ID: {new_project_id_final}")
+                    else: # User provided a valid name
+                        new_project_id_final = sanitize_project_name(valid_name_or_none)
+                        print(f"INFO: Using project name: {new_project_id_final}")
+                    break # Name validated or generated
+
+                if choice == "e": # User chose to exit during name input
                     print("Exiting StrataBRD Pro Agent. Goodbye!")
                     break
 
+                user_input_concept = get_user_choice(
+                    f"Project '{new_project_id_final}'. Enter your initial high-level concept or BRD idea (or 'exit'/'quit'): "
+                )
+                if user_input_concept == "exit":
+                    print("INFO: Exiting new project creation during concept input. Returning to main menu.")
+                    continue # To main menu
+
+                thread_id_counter +=1 # Increment for each new project attempt that gets this far
+                proj_id_created, conv_state_created, new_config = create_new_project_core_logic(
+                    new_project_id_final, user_input_concept, thread_id_counter
+                )
+
+                if proj_id_created: # Project creation successful
+                    current_project_id = proj_id_created
+                    current_conversation_state = conv_state_created
+                    config = new_config
+                else:
+                    # This case should ideally not be reached if create_new_project_core_logic is robust
+                    # and main handles exits before calling it.
+                    print("Error: Could not create new project. Returning to main menu.")
+                    continue
+
         # --- Interaction with the Agent Graph ---
-        if current_project_id and current_conversation_state:
+        if current_project_id and current_conversation_state: # current_conversation_state is AgentState object
             # Determine if we need to prompt for answers or new input
-            if current_conversation_state.get('clarification_questions_pending_answer'):
+            if current_conversation_state.clarification_questions_pending_answer:
                 prompt_msg = "\nPlease provide answers to the agent's questions (or type 'exit' to quit project and return to menu): "
                 answers_input = get_user_choice(prompt_msg)
                 if answers_input == "exit":
@@ -271,67 +242,98 @@ def main():
                     current_project_id, current_conversation_state, config = None, None, {}
                     continue
 
-                current_conversation_state["messages"].append(HumanMessage(content=answers_input))
-                current_conversation_state["clarification_questions_pending_answer"] = False # Answers provided
+                current_conversation_state.add_message(HumanMessage(content=answers_input))
+                current_conversation_state.set_answers_pending(False) # Answers provided
                 print("\nProcessing your answers...")
-            elif not current_conversation_state.get("messages") and current_conversation_state.get("userInput"):
+            elif not current_conversation_state.messages and current_conversation_state.userInput:
                 # First turn of a new project or loaded project that needs initial processing
                 print(f"\nProcessing initial concept for '{current_project_id}'...")
-            elif not current_conversation_state.get("userInput") and \
-                 not current_conversation_state.get("messages") and \
-                 not current_conversation_state.get("clarification_questions_pending_answer"):
+            elif not current_conversation_state.userInput and \
+                 not current_conversation_state.messages and \
+                 not current_conversation_state.clarification_questions_pending_answer:
                 # Loaded an empty or minimal project state, needs initial concept.
-                user_input = get_user_choice(
+                user_input_concept = get_user_choice( # Renamed to avoid conflict
                     f"Project '{current_project_id}' is empty. Enter your high-level concept or BRD idea (or 'exit' to return to menu): "
                 )
-                if user_input == "exit":
+                if user_input_concept == "exit":
                     print(f"Exiting project '{current_project_id}'. Returning to main menu.")
                     current_project_id, current_conversation_state, config = None, None, {}
                     continue
-                current_conversation_state["userInput"] = user_input
+                current_conversation_state.userInput = user_input_concept # Set on the instance
                 print(f"\nProcessing initial concept for '{current_project_id}'...")
             # Else: graph has messages and is not pending questions, it might be continuing a completed task.
             # The user will be prompted *after* this graph.invoke if no questions are asked.
 
             try:
-                # Invoke the graph with the current state
-                final_state = app.invoke(current_conversation_state, config=config)
-                current_conversation_state = final_state # Persist state for the next iteration
+                # Invoke the graph with the current state (which is an AgentState object)
+                # LangGraph should be able to handle an object as state if its attributes are correctly defined
+                # and it's what the graph was compiled with.
+                # Nodes receive this object, modify it, and (as currently implemented) return it.
+                final_state_obj = app.invoke(current_conversation_state, config=config)
+                current_conversation_state = final_state_obj # Persist state for the next iteration
 
                 if current_project_id and current_conversation_state:
-                    # Ensure thread_id from config is saved back to state (if it was newly generated for loaded project)
-                    if config.get("configurable", {}).get("thread_id"):
-                         current_conversation_state["thread_id"] = config["configurable"]["thread_id"]
-                    save_project(current_project_id, current_conversation_state)
+                    # Ensure thread_id from config is saved back to state object if it was newly generated for loaded project
+                    # This should already be handled if current_conversation_state.thread_id was set.
+                    # config_thread_id = config.get("configurable", {}).get("thread_id")
+                    # if config_thread_id and current_conversation_state.thread_id != config_thread_id:
+                    #    current_conversation_state.thread_id = config_thread_id # Ensure consistency
+
+                    save_project(current_project_id, current_conversation_state.to_dict()) # Convert to dict for saving
                     print(f"Project '{current_project_id}' saved successfully.")
 
                 print("\n--- Conversation Update ---")
-                if final_state and final_state.get('messages'):
-                    # Print only new messages since last user input could be complex here.
-                    # For now, printing all messages in final_state for simplicity.
-                    # User can see the context.
-                    for msg in final_state['messages']:
+                if final_state_obj and final_state_obj.messages:
+                    for msg in final_state_obj.messages:
                         if isinstance(msg, HumanMessage): print(f"  YOU: {msg.content}")
                         elif isinstance(msg, AIMessage): print(f"  AGENT: {msg.content}")
                         else: print(f"  {msg.type.upper()}: {str(msg.content if hasattr(msg, 'content') else msg)}")
                 else:
                     print("No messages in the current state to display.")
 
-                if final_state.get('clarification_questions_pending_answer', False):
+                if final_state_obj.clarification_questions_pending_answer:
                     # Agent asked questions (printed above). Loop will prompt for answers.
                     pass
                 else: # Agent phase complete (BRD generated or error occurred and handled by agent)
                     print("\n--- Agent Interaction Complete for this phase ---")
-                    if final_state.get('current_brd_content') and not ("ERROR:" in final_state.get('current_brd_content') or "Error:" in final_state.get('current_brd_content')):
+                    brd_content_output = final_state_obj.current_brd_content
+                    agent_messages_list = final_state_obj.messages # Renamed to avoid conflict
+                    last_ai_message_content = ""
+                    if agent_messages_list and isinstance(agent_messages_list[-1], AIMessage):
+                        last_ai_message_content = agent_messages_list[-1].content or ""
+
+                    critical_error_detected_in_agent_response = False
+                    if "LLM_AUTH_ERROR" in brd_content_output or \
+                       "AuthenticationError" in brd_content_output or \
+                       "authentication failed" in brd_content_output.lower() or \
+                       "LLM_UNAVAILABLE" in brd_content_output or \
+                       "LLM_AUTH_ERROR" in last_ai_message_content or \
+                       "AuthenticationError" in last_ai_message_content or \
+                       "authentication failed" in last_ai_message_content.lower() or \
+                       "LLM_UNAVAILABLE" in last_ai_message_content:
+                        critical_error_detected_in_agent_response = True
+
+                    if brd_content_output and not ("ERROR:" in brd_content_output or "Error:" in brd_content_output or critical_error_detected_in_agent_response) and not ("LLM_UNAVAILABLE" in brd_content_output) :
                         print("\n--- Generated BRD Content (from current_brd_content) ---")
-                        print(final_state['current_brd_content'])
+                        print(brd_content_output)
                         print("--- End of BRD Content ---")
-                    elif final_state.get('current_brd_content'): # BRD content might be an error message from agent
-                        print(f"\n--- Notice (from current_brd_content) ---")
-                        print(final_state['current_brd_content'])
+                    elif brd_content_output:
+                        print(f"\n--- Notice from Agent ---")
+                        print(brd_content_output)
                         print("--- End of Notice ---")
-                    else: # No BRD content and no pending questions
-                        print("No final BRD content was generated in this phase, and no further questions were asked.")
+                    elif last_ai_message_content:
+                         print(f"\n--- Notice from Agent ---")
+                         print(last_ai_message_content)
+                         print("--- End of Notice ---")
+                    else:
+                        print("No final BRD content or specific agent messages were generated in this phase, and no further questions were asked.")
+
+                    if critical_error_detected_in_agent_response:
+                        print("CRITICAL: A critical LLM operational error (e.g., authentication, unavailability) was reported by the agent.")
+                        print("Please check your API key and LLM service status.")
+                        print(f"Returning to main menu. Project '{current_project_id}' session ended.")
+                        current_project_id, current_conversation_state, config = None, None, {}
+                        continue
 
                     next_action_prompt = (
                         f"Project '{current_project_id}'. Continue with this project (e.g., refine, add details), "
@@ -340,34 +342,58 @@ def main():
                     next_action = get_user_choice(next_action_prompt, ['c', 'n', 'l', 'e'])
 
                     if next_action == 'c':
-                        user_input_prompt = (
+                        user_input_refine = get_user_choice( # Renamed
                             f"Enter your next query, refinement, or additional concept for '{current_project_id}' "
                             "(or type 'exit' to return to main menu): "
                         )
-                        user_input = get_user_choice(user_input_prompt)
-                        if user_input == "exit":
+                        if user_input_refine == "exit":
                             print(f"Finished with project '{current_project_id}'. Returning to main menu.")
                             current_project_id, current_conversation_state, config = None, None, {}
-                            continue # To main menu
-                        current_conversation_state["userInput"] = user_input
-                        # Clear old BRD content if user is providing new input to refine/change it
-                        current_conversation_state["current_brd_content"] = ""
-                        if "messages" not in current_conversation_state: # Should always be there
-                            current_conversation_state["messages"] = []
-                        # The graph's start_node will add this userInput as a new HumanMessage
-                    elif next_action == 'n' or next_action == 'l': # Reset for New or Load
+                            continue
+                        current_conversation_state.userInput = user_input_refine
+                        current_conversation_state.set_brd_content("") # Clear old BRD
+                        # messages list is handled by add_message or graph itself.
+                    elif next_action == 'n' or next_action == 'l':
                         current_project_id, current_conversation_state, config = None, None, {}
-                    elif next_action == 'e': # Exit
+                    elif next_action == 'e':
                         print("Exiting StrataBRD Pro Agent. Goodbye!")
                         break
 
+            except AuthenticationError as e: # Should ideally be caught by agent's retry, but as a fallback
+                print(f"\nCRITICAL ERROR: OpenAI Authentication Failed: {e}")
+                print("Your OPENAI_API_KEY seems to be invalid or has been revoked.")
+                print("Please verify your API key. The current session cannot continue.")
+                current_project_id, current_conversation_state, config = None, None, {} # Reset to main menu
+            except RateLimitError as e: # Should be caught by agent's retry
+                print(f"\nERROR: OpenAI Rate Limit Exceeded: {e}")
+                print("The agent attempted to contact OpenAI but was rate-limited. This issue might be temporary.")
+                print("Please try again later or check your OpenAI account usage limits.")
+                # State is preserved, user can decide to retry interaction or exit project
+            except (APITimeoutError, APIConnectionError) as e: # Should be caught by agent's retry
+                error_type = type(e).__name__
+                print(f"\nERROR: OpenAI Network Issue ({error_type}): {e}")
+                print("The agent could not connect to OpenAI. This might be a temporary network problem or an OpenAI service issue.")
+                print("Please check your internet connection and OpenAI's status page.")
+                # State is preserved
+            except APIError as e: # General OpenAI API error, possibly not retried or retries failed
+                error_type = type(e).__name__
+                print(f"\nERROR: An OpenAI API error occurred ({error_type}): {e}")
+                print("This may be due to an issue with the request or OpenAI's services. Retries were attempted if applicable.")
+                # State is preserved
             except Exception as e:
-                print(f"\nERROR: An unexpected error occurred during agent execution: {type(e).__name__} - {e}")
-                # Consider logging full traceback for debugging: import traceback; traceback.print_exc()
-                print("This could be due to API issues (key, rate limits), network problems, or internal errors.")
-                print(f"Resetting project '{current_project_id}' and returning to main menu.")
+                import traceback
+                print(f"\nUNEXPECTED ERROR: An unexpected error occurred during agent execution: {type(e).__name__} - {e}")
+                print("Full error traceback:")
+                traceback.print_exc() # Print full traceback for unexpected errors
+                print("\nThe agent's internal retry mechanisms for common API issues were active.")
+                print("If this persists, it might indicate an internal application error or an unhandled API response.")
+                if current_project_id:
+                    print(f"Current project state for '{current_project_id}' has been saved (if possible).")
+                    print(f"You might be able to resume by loading the project. Resetting to main menu.")
+                else:
+                    print("Resetting to main menu.")
                 current_project_id, current_conversation_state, config = None, None, {}
-                # Loop back to main menu
+                # Loop back to main menu (state is reset to avoid error loops)
 
 if __name__ == "__main__":
     main()
