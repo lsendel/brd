@@ -1,7 +1,10 @@
 import os
-import os # os import was already there
+# os import was already there # This comment is now redundant
 from brd.graph import create_graph, AgentState
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_openai import ChatOpenAI # Added for LLM initialization
+# openai exceptions for more specific error handling during LLM init
+from openai import APIError, RateLimitError, AuthenticationError, APITimeoutError, APIConnectionError
 from brd.persistence import save_project # Removed load_project, list_projects as they'll be used via project_manager
 # import uuid # No longer needed here, moved to project_manager
 
@@ -60,7 +63,8 @@ def main():
         print("INFO: No .env file found. Relying on globally set environment variables.")
 
     # Prominent API Key Check
-    if not os.getenv("OPENAI_API_KEY"):
+    api_key_present = bool(os.getenv("OPENAI_API_KEY"))
+    if not api_key_present:
         print("\n" + "=" * 60)
         print("CRITICAL WARNING: OPENAI_API_KEY environment variable not found!")
         print("The agent will NOT be able to communicate with the OpenAI API.")
@@ -77,41 +81,60 @@ def main():
             return
         print("WARNING: Continuing without API key. Expect errors related to OpenAI API calls.")
 
-    print("\nInitializing StrataBRD Pro Agent...")
-    # openai exceptions for more specific error handling if they bubble up
-    from openai import APIError, AuthenticationError, RateLimitError, APITimeoutError, APIConnectionError
+    llm_instance: ChatOpenAI | None = None
+    if api_key_present:
+        print("INFO: OpenAI API Key found. Initializing LLM...")
+        try:
+            model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-3.5-turbo")
+            temperature_str = os.getenv("OPENAI_TEMPERATURE", "0.7")
+            temperature = 0.7 # Default
+            try:
+                temperature = float(temperature_str)
+            except ValueError:
+                print(f"WARNING: Invalid OPENAI_TEMPERATURE value '{temperature_str}'. Defaulting to 0.7.")
 
-    print("\nInitializing StrataBRD Pro Agent...")
+            llm_instance = ChatOpenAI(model=model_name, temperature=temperature)
+            print(f"INFO: LLM initialized successfully with model: {model_name}, temperature: {temperature}.")
+        except AuthenticationError as e:
+            print(f"FATAL: OpenAI Authentication Error initializing the LLM: {e}")
+            print("Please check your OPENAI_API_KEY. It might be invalid, missing, or expired.")
+            print("Exiting.")
+            return
+        except (APITimeoutError, APIConnectionError) as e:
+            error_type = type(e).__name__
+            print(f"FATAL: OpenAI Network Error ({error_type}) initializing the LLM: {e}")
+            print("Please check your internet connection and OpenAI's service status.")
+            print("Exiting.")
+            return
+        except APIError as e: # Catch other OpenAI API errors during LLM initialization
+            error_type = type(e).__name__
+            print(f"FATAL: OpenAI API Error ({error_type}) initializing the LLM: {e}")
+            print("This could be due to various issues with the API. Check OpenAI's status or your account.")
+            print("Exiting.")
+            return
+        except Exception as e: # Catch other unexpected errors during LLM initialization
+            print(f"FATAL: An unexpected error occurred while initializing the LLM: {type(e).__name__} - {e}")
+            print("Exiting.")
+            return
+    else:
+        print("INFO: LLM (StrataBRD Pro agent's core) will not be functional as OPENAI_API_KEY is missing.")
+
+    print("\nInitializing StrataBRD Pro Agent Graph...")
     try:
-        app = create_graph() # This also initializes the LLM in agent.py
-        print("INFO: StrataBRD Pro Agent initialized successfully.")
+        app = create_graph()
+        print("INFO: StrataBRD Pro Agent Graph initialized successfully.")
         print("Welcome! Type 'exit' or 'quit' at any prompt to end the session.")
-    except AuthenticationError as e:
-        print(f"FATAL: OpenAI Authentication Error initializing the agent: {e}")
-        print("Please check your OPENAI_API_KEY. It might be invalid, missing, or expired.")
-        print("Exiting.")
-        return
-    except (APITimeoutError, APIConnectionError) as e:
-        error_type = type(e).__name__
-        print(f"FATAL: OpenAI Network Error ({error_type}) initializing the agent: {e}")
-        print("Please check your internet connection and OpenAI's service status.")
-        print("Exiting.")
-        return
-    except APIError as e: # Catch other OpenAI API errors during initialization
-        error_type = type(e).__name__
-        print(f"FATAL: OpenAI API Error ({error_type}) initializing the agent: {e}")
-        print("This could be due to various issues with the API. Check OpenAI's status or your account.")
-        print("Exiting.")
-        return
-    except Exception as e: # Catch other unexpected errors during initialization
+    except Exception as e: # Catch other unexpected errors during graph initialization
         print(f"FATAL: An unexpected error occurred while initializing the agent graph: {type(e).__name__} - {e}")
-        print("Please check your setup, dependencies (e.g., LangChain, OpenAI library versions), and environment variables.")
+        print("Please check your setup and dependencies (e.g., LangChain versions).")
         print("Exiting.")
         return
 
     current_project_id: str | None = None
     current_conversation_state: AgentState | None = None
-    config: dict = {} # Ensure config is always a dict
+    # Config now needs to carry the llm_instance
+    base_config: dict = {'llm': llm_instance}
+    config: dict = {**base_config} # Initialize with llm_instance
     thread_id_counter: int = 0
 
     while True:
@@ -153,17 +176,18 @@ def main():
                     current_project_id = proj_id_loaded
                     current_conversation_state = conv_state_loaded # This is now an AgentState instance
 
-                    if current_conversation_state.thread_id:
-                        config = {"configurable": {"thread_id": current_conversation_state.thread_id}}
-                        print(f"INFO: Using existing Thread ID from loaded project: {current_conversation_state.thread_id}")
-                    else:
-                        # This case should be less likely if projects are always saved with a thread_id
-                        # And if AgentState class ensures thread_id is initialized.
+                    # Update config with thread_id and existing llm_instance
+                    current_thread_id = current_conversation_state.thread_id
+                    if not current_thread_id:
                         thread_id_counter += 1
-                        new_thread_id = f"brd-cli-thread-{current_project_id}-{thread_id_counter}"
-                        config = {"configurable": {"thread_id": new_thread_id}}
-                        current_conversation_state.thread_id = new_thread_id # Set on the instance
-                        print(f"WARNING: No Thread ID found in loaded project state object. Generated new one: {new_thread_id}")
+                        current_thread_id = f"brd-cli-thread-{current_project_id}-{thread_id_counter}"
+                        current_conversation_state.thread_id = current_thread_id # Set on the instance
+                        print(f"WARNING: No Thread ID found in loaded project state object. Generated new one: {current_thread_id}")
+                    else:
+                        print(f"INFO: Using existing Thread ID from loaded project: {current_thread_id}")
+
+                    config = {**base_config, "configurable": {"thread_id": current_thread_id}}
+
 
                     if not current_conversation_state.messages and \
                        not current_conversation_state.clarification_questions_pending_answer:
@@ -172,7 +196,8 @@ def main():
                             f"Enter your next query or concept for '{current_project_id}' (or 'exit' to return to menu): "
                         )
                         if user_input_for_loaded == "exit":
-                            current_project_id, current_conversation_state, config = None, None, {}
+                            current_project_id, current_conversation_state = None, None
+                            config = {**base_config} # Reset config to base (only llm)
                             continue
                         current_conversation_state.userInput = user_input_for_loaded # Set on the instance
                 else:
@@ -224,7 +249,8 @@ def main():
                 if proj_id_created: # Project creation successful
                     current_project_id = proj_id_created
                     current_conversation_state = conv_state_created
-                    config = new_config
+                    # new_config from create_new_project_core_logic already includes thread_id
+                    config = {**base_config, **new_config} # Combine with base_config for LLM
                 else:
                     # This case should ideally not be reached if create_new_project_core_logic is robust
                     # and main handles exits before calling it.
@@ -239,7 +265,8 @@ def main():
                 answers_input = get_user_choice(prompt_msg)
                 if answers_input == "exit":
                     print(f"Exiting project '{current_project_id}'. Returning to main menu.")
-                    current_project_id, current_conversation_state, config = None, None, {}
+                    current_project_id, current_conversation_state = None, None
+                    config = {**base_config} # Reset config to base (only llm)
                     continue
 
                 current_conversation_state.add_message(HumanMessage(content=answers_input))
@@ -257,7 +284,8 @@ def main():
                 )
                 if user_input_concept == "exit":
                     print(f"Exiting project '{current_project_id}'. Returning to main menu.")
-                    current_project_id, current_conversation_state, config = None, None, {}
+                    current_project_id, current_conversation_state = None, None
+                    config = {**base_config} # Reset config to base (only llm)
                     continue
                 current_conversation_state.userInput = user_input_concept # Set on the instance
                 print(f"\nProcessing initial concept for '{current_project_id}'...")
@@ -332,7 +360,8 @@ def main():
                         print("CRITICAL: A critical LLM operational error (e.g., authentication, unavailability) was reported by the agent.")
                         print("Please check your API key and LLM service status.")
                         print(f"Returning to main menu. Project '{current_project_id}' session ended.")
-                        current_project_id, current_conversation_state, config = None, None, {}
+                        current_project_id, current_conversation_state = None, None
+                        config = {**base_config} # Reset config
                         continue
 
                     next_action_prompt = (
@@ -348,22 +377,25 @@ def main():
                         )
                         if user_input_refine == "exit":
                             print(f"Finished with project '{current_project_id}'. Returning to main menu.")
-                            current_project_id, current_conversation_state, config = None, None, {}
+                            current_project_id, current_conversation_state = None, None
+                            config = {**base_config} # Reset config
                             continue
                         current_conversation_state.userInput = user_input_refine
                         current_conversation_state.set_brd_content("") # Clear old BRD
                         # messages list is handled by add_message or graph itself.
                     elif next_action == 'n' or next_action == 'l':
-                        current_project_id, current_conversation_state, config = None, None, {}
+                        current_project_id, current_conversation_state = None, None
+                        config = {**base_config} # Reset config
                     elif next_action == 'e':
                         print("Exiting StrataBRD Pro Agent. Goodbye!")
                         break
 
             except AuthenticationError as e: # Should ideally be caught by agent's retry, but as a fallback
-                print(f"\nCRITICAL ERROR: OpenAI Authentication Failed: {e}")
+                print(f"\nCRITICAL ERROR: OpenAI Authentication Failed: {e}") # This might be from LLM calls within graph if not caught by agent
                 print("Your OPENAI_API_KEY seems to be invalid or has been revoked.")
                 print("Please verify your API key. The current session cannot continue.")
-                current_project_id, current_conversation_state, config = None, None, {} # Reset to main menu
+                current_project_id, current_conversation_state = None, None
+                config = {**base_config} # Reset to main menu
             except RateLimitError as e: # Should be caught by agent's retry
                 print(f"\nERROR: OpenAI Rate Limit Exceeded: {e}")
                 print("The agent attempted to contact OpenAI but was rate-limited. This issue might be temporary.")
@@ -392,7 +424,8 @@ def main():
                     print(f"You might be able to resume by loading the project. Resetting to main menu.")
                 else:
                     print("Resetting to main menu.")
-                current_project_id, current_conversation_state, config = None, None, {}
+                current_project_id, current_conversation_state = None, None
+                config = {**base_config} # Reset config
                 # Loop back to main menu (state is reset to avoid error loops)
 
 if __name__ == "__main__":
