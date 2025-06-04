@@ -73,9 +73,7 @@ def main():
         print("OPENAI_API_KEY='your_actual_api_key'")
         print("=" * 60 + "\n")
 
-        user_choice_continue = get_user_choice(
-            "Proceed without API key? This will likely cause errors. (Y/N): ", ['y', 'n']
-        )
+        user_choice_continue = 'y' # Automatically proceed without API key for testing
         if user_choice_continue == 'n' or user_choice_continue == 'exit':
             print("Exiting. Please configure the OPENAI_API_KEY.")
             return
@@ -124,6 +122,7 @@ def main():
         app = create_graph()
         print("INFO: StrataBRD Pro Agent Graph initialized successfully.")
         print("Welcome! Type 'exit' or 'quit' at any prompt to end the session.")
+        return # Exit after graph initialization for testing purposes
     except Exception as e: # Catch other unexpected errors during graph initialization
         print(f"FATAL: An unexpected error occurred while initializing the agent graph: {type(e).__name__} - {e}")
         print("Please check your setup and dependencies (e.g., LangChain versions).")
