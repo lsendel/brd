@@ -27,73 +27,103 @@ def main():
     try:
         app = create_graph()
         print("StrataBRD Pro Agent initialized.")
-        print("Type 'exit' or 'quit' to end the session.")
+        print("Type 'exit' or 'quit' to end the session at any prompt.")
     except Exception as e:
         print(f"Error initializing the agent graph: {e}")
         return
 
+    current_conversation_state: AgentState | None = None
+    thread_id_counter = 0
+    config = {} # Will be set per new conversation
+
     while True:
-        user_input = input("\nEnter your high-level concept or BRD idea: ")
-        if user_input.lower() in ["exit", "quit"]:
-            print("Exiting StrataBRD Pro Agent.")
-            break
+        if current_conversation_state is None:
+            # Start of a new BRD idea
+            user_input = input("\nEnter your high-level concept or BRD idea: ")
+            if user_input.lower() in ["exit", "quit"]:
+                print("Exiting StrataBRD Pro Agent.")
+                break
+            if not user_input.strip():
+                print("Please provide some input.")
+                continue
 
-        if not user_input.strip():
-            print("Please provide some input.")
-            continue
+            thread_id_counter += 1
+            config = {"configurable": {"thread_id": f"brd-cli-thread-{thread_id_counter}"}}
+            print(f"\nStarting new conversation with Thread ID: {config['configurable']['thread_id']}")
 
-        print("\nProcessing your request...")
+            current_conversation_state = {
+                "userInput": user_input,
+                "messages": []
+                # Graph's start_node will initialize other fields:
+                # current_understanding, max_clarification_rounds, current_clarification_round,
+                # clarification_questions_pending_answer, etc.
+            }
+        else:
+            # We are in a clarification cycle, AI has asked questions.
+            # The questions would have been printed by the message display logic below in the previous iteration.
+            answers_input = input("\nPlease provide answers to the above questions (or type 'exit' to quit): ")
+            if answers_input.lower() in ["exit", "quit"]:
+                print("Exiting StrataBRD Pro Agent.")
+                break
 
-        # Prepare initial state for the graph
-        # The 'messages' list will be populated by the 'start_node' based on 'userInput'
-        initial_state: AgentState = {
-            "userInput": user_input,
-            "messages": [], # Start_node will populate this from userInput
-            "current_brd_content": "",
-            "clarification_questions_needed": False,
-            "clarification_questions": []
-        }
+            # Append user's answers as a HumanMessage to the existing state's messages
+            current_conversation_state["messages"].append(HumanMessage(content=answers_input))
+            print("\nProcessing your answers...")
 
-        # It's good practice to provide a configurable map, especially for stream/invoke
-        # thread_id helps LangGraph track state across multiple calls for the same "conversation"
-        # For a simple CLI like this, a fixed ID or unique one per run is fine.
-        config = {"configurable": {"thread_id": "brd-cli-thread"}}
 
         try:
-            # Using invoke to get the final state in one go for this simple CLI
-            # stream() could be used for more interactive, step-by-step output.
-            final_state = app.invoke(initial_state, config=config)
+            # Invoke the graph with the current state (either initial or with appended answers)
+            final_state = app.invoke(current_conversation_state, config=config)
+            current_conversation_state = final_state # Persist state for the next iteration
 
-            print("\n--- Agent Interaction Complete ---")
+            # Display all messages from this turn's processing
+            # This will include any new AI messages (like questions or the final BRD)
+            # and will re-print previous messages if they are part of the state.
+            # For a cleaner display, one might only print new messages since last turn.
+            # However, printing all helps see the full context if the graph modifies message history.
 
-            # Display the conversation or the final BRD
-            # The 'messages' list in AgentState should contain the history.
-            # The last AI message often contains the final output or summary.
-
+            print("\n--- Conversation Update ---")
             if final_state and final_state.get('messages'):
-                print("\nConversation History & Output:")
+                # Determine how many messages were present before this invoke call to print only new ones.
+                # This is a bit tricky as current_conversation_state was passed in and mutated.
+                # A simpler approach for now is to print all messages in final_state.
+                # For a more refined CLI, you'd manage "new" messages more carefully.
+
+                # Let's try to print only the last set of exchanges if possible,
+                # by finding the last AIMessage that might have been questions.
+                # This is still imperfect. A robust solution needs careful message tracking.
+
+                # Simple print all for now:
                 for msg in final_state['messages']:
                     if isinstance(msg, HumanMessage):
                         print(f"  YOU: {msg.content}")
                     else: # Typically AIMessage
                         print(f"  AGENT: {msg.content}")
+            else:
+                print("No messages in the current state to display.")
 
-                # Additionally, you might want to specifically print the 'current_brd_content'
-                # if it's the primary artifact.
+            # Check if the agent is waiting for more answers
+            if final_state.get('clarification_questions_pending_answer', False):
+                # Questions were asked by the agent (and printed above).
+                # The loop will continue, prompting for answers.
+                pass # Loop continues
+            else:
+                # Clarification loop is done (or was never needed)
+                print("\n--- Agent Interaction Complete for this BRD ---")
                 if final_state.get('current_brd_content'):
                     print("\n--- Generated BRD Content (from current_brd_content) ---")
                     print(final_state['current_brd_content'])
                 else:
-                    print("\nNo specific BRD content found in final_state.current_brd_content.")
+                    print("\nNo final BRD content was generated for this interaction.")
 
-            else:
-                print("No messages found in the final state.")
+                current_conversation_state = None # Reset for a new BRD idea
 
         except Exception as e:
             print(f"Error during agent execution: {e}")
-            # This might include errors from the LLM if the API key is missing/invalid
-            # or other runtime issues in the graph nodes.
+            print("This might include errors from the LLM if the API key is missing/invalid.")
             print("Please ensure your OPENAI_API_KEY is correctly set if this is an API error.")
+            print("Resetting conversation.")
+            current_conversation_state = None # Reset on error to start fresh
 
 if __name__ == "__main__":
     main()
