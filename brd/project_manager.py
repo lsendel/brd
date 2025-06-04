@@ -6,7 +6,7 @@ import uuid
 from typing import Tuple, Dict, Any, Optional, List # Added List
 
 from langchain_core.messages import HumanMessage, AIMessage
-from .graph import AgentState # Correctly import AgentState
+from .agent_state import AgentState # Import the class-based AgentState
 from .persistence import load_project, list_projects # list_projects needed here
 
 # DISALLOWED_CHARS for project name validation

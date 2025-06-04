@@ -47,7 +47,7 @@ def initialize_llm() -> Optional[ChatOpenAI]:
         temperature = 0.7
 
     try:
-        llm_instance = ChatOpenAI(model=model_name, temperature=temperature)
+        llm_instance = ChatOpenAI(model=model_name, temperature=temperature, openai_api_key=api_key)
         print(f"INFO: LLM initialized with model: {model_name}, temperature: {temperature}.")
         return llm_instance
     except (AuthenticationError, APIError) as e:
@@ -353,7 +353,8 @@ if __name__ == '__main__':
             print(f"WARNING: Invalid OPENAI_TEMPERATURE value '{temperature_str}'. Defaulting to 0.7 for local test LLM.")
             temperature = 0.7
         try:
-            local_llm_instance = ChatOpenAI(model=model_name, temperature=temperature)
+            api_key = os.getenv("OPENAI_API_KEY")
+            local_llm_instance = ChatOpenAI(model=model_name, temperature=temperature, openai_api_key=api_key)
             print(f"INFO: Local LLM instance for testing initialized with model: {model_name}, temperature: {temperature}.")
         except Exception as e:
             print(f"ERROR: Failed to initialize local_llm_instance for testing: {e}")

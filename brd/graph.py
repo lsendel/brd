@@ -395,7 +395,8 @@ if __name__ == '__main__':
             print(f"WARNING: Invalid OPENAI_TEMPERATURE value '{temperature_str}'. Defaulting to 0.7 for test LLM.")
             temperature = 0.7
         try:
-            test_llm = ChatOpenAI(model=model_name, temperature=temperature)
+            api_key = os.getenv("OPENAI_API_KEY")
+            test_llm = ChatOpenAI(model=model_name, temperature=temperature, openai_api_key=api_key)
             print(f"INFO: Test LLM initialized with model: {model_name}, temperature: {temperature}.")
         except Exception as e:
             print(f"ERROR: Failed to initialize test_llm: {e}")

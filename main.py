@@ -1,6 +1,7 @@
 import os
 # os import was already there # This comment is now redundant
-from brd.graph import create_graph, AgentState
+from brd.graph import create_graph
+from brd.agent_state import AgentState
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI # Added for LLM initialization
 # openai exceptions for more specific error handling during LLM init
@@ -21,10 +22,14 @@ from brd.project_manager import (
 # Attempt to load .env file for local development
 try:
     import dotenv
-    if dotenv.load_dotenv(override=False): # override=False to respect existing env vars
-        print("INFO: Loaded environment variables from .env file (if present and not already set).")
+    if os.path.exists(".env"):
+        dotenv.load_dotenv(override=False)  # Load environment variables from .env file
+        if os.getenv("OPENAI_API_KEY"):
+            print("INFO: Loaded environment variables from .env file (if present and not already set).")
+        else:
+            print("INFO: .env file found but contains no relevant environment variables. Relying on globally set environment variables.")
     else:
-        print("INFO: No .env file found, or it is empty, or python-dotenv not installed. Relying on globally set environment variables.")
+        print("INFO: No .env file found. Relying on globally set environment variables.")
 except ImportError:
     print("INFO: python-dotenv not installed. .env file will not be loaded. Ensure OPENAI_API_KEY and other required variables are set globally if needed.")
 
@@ -91,7 +96,8 @@ def main():
             except ValueError:
                 print(f"WARNING: Invalid OPENAI_TEMPERATURE value '{temperature_str}'. Defaulting to 0.7.")
 
-            llm_instance = ChatOpenAI(model=model_name, temperature=temperature)
+            api_key = os.getenv("OPENAI_API_KEY")
+            llm_instance = ChatOpenAI(model=model_name, temperature=temperature, openai_api_key=api_key)
             print(f"INFO: LLM initialized successfully with model: {model_name}, temperature: {temperature}.")
         except AuthenticationError as e:
             print(f"FATAL: OpenAI Authentication Error initializing the LLM: {e}")
@@ -122,7 +128,7 @@ def main():
         app = create_graph()
         print("INFO: StrataBRD Pro Agent Graph initialized successfully.")
         print("Welcome! Type 'exit' or 'quit' at any prompt to end the session.")
-        return # Exit after graph initialization for testing purposes
+        # return # Exit after graph initialization for testing purposes
     except Exception as e: # Catch other unexpected errors during graph initialization
         print(f"FATAL: An unexpected error occurred while initializing the agent graph: {type(e).__name__} - {e}")
         print("Please check your setup and dependencies (e.g., LangChain versions).")
@@ -292,11 +298,27 @@ def main():
             # The user will be prompted *after* this graph.invoke if no questions are asked.
 
             try:
-                # Invoke the graph with the current state (which is an AgentState object)
-                # LangGraph should be able to handle an object as state if its attributes are correctly defined
-                # and it's what the graph was compiled with.
-                # Nodes receive this object, modify it, and (as currently implemented) return it.
-                final_state_obj = app.invoke(current_conversation_state, config=config)
+                # Convert AgentState object to dictionary for the graph
+                state_dict = current_conversation_state.to_dict()
+
+                # Invoke the graph with the dictionary state
+                final_state_dict = app.invoke(state_dict, config=config)
+
+                # Convert the result back to an AgentState object
+                final_state_obj = AgentState(
+                    userInput=final_state_dict.get("userInput", ""),
+                    messages=final_state_dict.get("messages", []),
+                    current_brd_content=final_state_dict.get("current_brd_content", ""),
+                    clarification_questions_needed=final_state_dict.get("clarification_questions_needed", False),
+                    clarification_questions=final_state_dict.get("clarification_questions", []),
+                    current_understanding=final_state_dict.get("current_understanding", ""),
+                    max_clarification_rounds=final_state_dict.get("max_clarification_rounds", 3),
+                    current_clarification_round=final_state_dict.get("current_clarification_round", 0),
+                    clarification_questions_pending_answer=final_state_dict.get("clarification_questions_pending_answer", False),
+                    route_condition=final_state_dict.get("route_condition", ""),
+                    thread_id=final_state_dict.get("thread_id")
+                )
+
                 current_conversation_state = final_state_obj # Persist state for the next iteration
 
                 if current_project_id and current_conversation_state:
