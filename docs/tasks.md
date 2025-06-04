@@ -14,7 +14,7 @@ This document lists actionable tasks to improve the StrataBRD Pro codebase, cove
 
 - [x] **Refactor `main.py`:** Move project management functions (`handle_load_project`, `handle_new_project`) from `main.py` into a new module, e.g., `brd/project_manager.py`, to reduce `main.py`'s length and improve separation of concerns.
 - [x] **`AgentState` as Class:** Consider converting the `AgentState` TypedDict in `brd/graph.py` into a class. This class could encapsulate state modification logic, potentially simplifying node functions and ensuring more controlled state transitions.
-- [ ] **LLM Dependency Injection:** Refactor `brd/agent.py` to allow the LLM instance to be injected as a dependency. This would simplify testing (easier mocking) and improve flexibility if different LLM configurations are needed.
+- [x] **LLM Dependency Injection:** Refactor `brd/agent.py` to allow the LLM instance to be injected as a dependency.
 - [ ] **Separate Test Logic:** Ensure all test-related logic and helper functions currently in `if __name__ == '__main__':` blocks within the main library code (e.g., `brd/agent.py`, `brd/graph.py`) are moved to the `tests/` directory.
 - [ ] **Prompt Management:** As the number of prompts in `brd/prompts.py` grows (especially with the 14 BRD sections), devise a more structured way to manage and select prompts, potentially using a prompt registry or template manager.
 - [ ] **Configuration Management:** Centralize configuration settings (e.g., `max_clarification_rounds`, default LLM model, temperature) into a dedicated configuration module or class, loaded from environment variables or a config file.
