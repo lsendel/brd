@@ -214,55 +214,92 @@ SECTIONS TO GENERATE:
     *   Stakeholder identification (list potential stakeholders based on input)
     *   Basic needs/expectations for a few key stakeholders (derived from input)
 
-4.  **Vision & Scope**
+4.  **Vision & Scope** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Fill based on user input, making reasonable inferences.)
     *   Product vision statement (derived from input)
     *   In-scope features (high-level list based on input)
     *   Out-of-scope items (make reasonable assumptions or state if unclear)
+    *   Success criteria (high-level, if inferable)
+    *   Key assumptions & constraints (high-level, if inferable)
 
-5.  **Business Process Models** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Based on input, briefly describe current AS-IS and future TO-BE processes. Mention potential for gap analysis.)
-    *   Current State (AS-IS) Process (briefly describe based on input)
-    *   Future State (TO-BE) Process (briefly describe based on input)
-    *   Gap Analysis (mention potential if inferable)
-
-6.  **Conceptual Solution Architecture** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Based on input, describe a high-level system context and list major components hinted at.)
-    *   High-Level System Context (describe briefly based on input)
-    *   Major Components (list if inferable from input)
-
-7.  **Functional Requirements** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Provide a detailed list of user stories (at least 3-5 if input allows, or more based on complexity) with clear acceptance criteria for each. Ensure unique numbering (FR-001, FR-002, etc.).)
+5.  **Functional Requirements** (basic) (Refer to STRATA_BRD_PRO_PERSONA for full structure for detailed Functional Requirements. For this initial pass, provide a basic list of 3-5 key functional areas or high-level user stories based on the input. Ensure unique numbering like FR-001, FR-002.)
     *   Example:
-        *   **FR-001: [User Story Title]**
-            *   As a [type of user], I want [an action] so that [a benefit/value].
-            *   **Acceptance Criteria:**
-                *   Criterion 1: [Description of acceptance]
-                *   Criterion 2: [Description of acceptance]
-
-8.  **Non-Functional Requirements** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Identify key non-functional aspects like Performance, Security, Usability, and Reliability based on the input. Provide a brief description for each identified NFR. Use NFR-001, NFR-002, etc. for numbering.)
-    *   NFR-001: [e.g., Performance] - [Brief description based on input]
-    *   NFR-002: [e.g., Security] - [Brief description based on input]
-
-9.  **Data Requirements** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Describe any key data entities mentioned or implied by the input. Briefly touch upon data storage or data quality if inferable. Use DR-001, DR-002, etc. for numbering if listing multiple entities.)
-    *   DR-001: [e.g., User Data] - [Brief description of data involved, potential storage considerations if obvious]
-
-10. **Integration & Interface Requirements** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Identify potential internal or external system integrations or interfaces based on the input. Briefly describe their purpose. Use INT-001, INT-002, etc. for numbering.)
-    *   INT-001: [e.g., Payment Gateway Integration] - [Brief description of purpose and interaction if inferable]
-
-11. **Delivery Approach** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Recommend a suitable delivery methodology (e.g., Agile, Waterfall, Hybrid) based on the project's nature. Briefly mention release planning or MVP if inferable. Use DA-XXX numbering if listing multiple points.)
-    *   DA-001: [e.g., Recommended Methodology] - [Brief explanation]
-
-12. **Risk Management** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Identify 2-3 potential risks based on the input. For each risk, briefly suggest a mitigation strategy. Use RM-XXX numbering.)
-    *   RM-001: [Potential Risk 1] - Mitigation: [Brief strategy]
-    *   RM-002: [Potential Risk 2] - Mitigation: [Brief strategy]
-
-13. **Quality Assurance** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Outline a basic testing approach (e.g., unit, integration, UAT). Mention key areas to focus testing on based on the input. Use QA-XXX numbering if listing multiple points.)
-    *   QA-001: [e.g., Testing Approach] - [Brief explanation and focus areas]
-
-14. **Change Management** (Refer to STRATA_BRD_PRO_PERSONA for full structure. Identify potential change impacts on stakeholders. Suggest key activities like training or communication if inferable. Use CM-XXX numbering if listing multiple points.)
-    *   CM-001: [e.g., Stakeholder Impact/Activity] - [Brief description]
+        *   **FR-001: [High-level Function/User Story Title]**
+            *   As a [type of user], I want [an action] so that [a benefit/value]. (If a user story format is applicable)
+            *   Brief description of the function.
 
 Remember to show your reasoning process transparently if assumptions are made.
 Output only the requested BRD sections in Markdown format.
 """
 
 # Placeholder for other prompts if needed in the future
-# e.g., CLARIFICATION_PROMPT_TEMPLATE = "..."
+# e.g., CLARIFICATION_PROMPT_TEMPLATE = "..." # This will be replaced by the new template
 # e.g., GENERATION_PROMPT_TEMPLATE = "..."
+
+CLARIFICATION_QUESTIONS_TEMPLATE = """
+You are operating as "StrataBRD Pro" (as defined in the STRATA_BRD_PRO_PERSONA).
+Your task is to determine if there is sufficient detail to draft a comprehensive 14-section Business Requirements Document (BRD) based on the provided information.
+
+Review the following:
+1.  **Current Project Summary / Previously Gathered Information:**
+    ```
+    {{current_project_summary}}
+    ```
+
+2.  **Latest User Utterance / New Information:**
+    ```
+    {{latest_user_utterance}}
+    ```
+
+**Assessment Criteria:**
+Consider the information needed to adequately populate all 14 sections of the BRD (Executive Summary, Business Context & Drivers, Stakeholder Analysis, Vision & Scope, Business Process Models, Conceptual Solution Architecture, Functional Requirements, Non-Functional Requirements, Data Requirements, Integration & Interface Requirements, Delivery Approach, Risk Management, Quality Assurance, Change Management).
+
+**Output Instructions:**
+
+*   **If the combined information from the summary and the latest utterance seems INSUFFICIENT** to draft a reasonably detailed 14-section BRD, formulate 1 to 3 specific, targeted, and open-ended questions. These questions should aim to clarify critical missing information necessary for creating the BRD. Focus on questions that will help fill significant gaps. Do NOT ask for information already clearly present.
+    Output *only* the questions, as a numbered list.
+    Example:
+    1. What are the primary business objectives this project aims to achieve?
+    2. Could you describe the target users for this solution?
+    3. Are there any known integrations with existing systems that will be required?
+
+*   **If the combined information appears SUFFICIENT** to proceed with drafting a comprehensive 14-section BRD (even if some minor details might still be inferred or elaborated upon during the drafting process), then respond with the exact phrase:
+    NO_QUESTIONS_NEEDED
+
+Do not add any preamble, explanation, or closing remarks to your response. Only output the numbered questions or the "NO_QUESTIONS_NEEDED" marker.
+"""
+
+REFINE_UNDERSTANDING_TEMPLATE = """
+You are operating as "StrataBRD Pro" (as defined in the STRATA_BRD_PRO_PERSONA).
+Your task is to synthesize information to create an updated, coherent project summary.
+
+Review the following inputs:
+
+1.  **Current Project Summary:**
+    This is the existing understanding of the project before the latest round of questions and answers.
+    ```
+    {{current_project_summary}}
+    ```
+
+2.  **Questions That Were Asked to the User:**
+    These are the questions you (StrataBRD Pro) previously asked to get more clarity.
+    ```
+    {{questions_that_were_asked}}
+    ```
+
+3.  **User's Answers to Those Questions:**
+    These are the latest responses from the user, addressing the questions you asked.
+    ```
+    {{user_answers}}
+    ```
+
+**Your Task:**
+Based *only* on the information provided in these three inputs, create a single, revised, and comprehensive project summary.
+- Integrate the new details from the user's answers into the current project summary.
+- Clarify any ambiguities that the answers resolve.
+- Ensure the revised summary is coherent and flows well.
+- The revised summary should replace the "Current Project Summary" for future reference. It must be a complete summary, not just an addendum of the new information.
+- If the user's answers are very brief or do not substantially change the understanding, reiterate the current summary with any minor applicable updates.
+
+**Output Instructions:**
+Output *only* the revised project summary text. Do not include any preamble, headings, or explanation.
+"""

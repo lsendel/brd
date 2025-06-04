@@ -1,5 +1,10 @@
 import unittest
-from brd.prompts import STRATA_BRD_PRO_PERSONA, INITIAL_BRD_SECTIONS_TASK_TEMPLATE
+from brd.prompts import (
+    STRATA_BRD_PRO_PERSONA,
+    INITIAL_BRD_SECTIONS_TASK_TEMPLATE,
+    CLARIFICATION_QUESTIONS_TEMPLATE, # New import
+    REFINE_UNDERSTANDING_TEMPLATE # New import
+)
 
 class TestPrompts(unittest.TestCase):
 
@@ -110,6 +115,29 @@ class TestPrompts(unittest.TestCase):
         self.assertIn("change impacts", cm_instructions)
         self.assertIn("training or communication", cm_instructions)
         self.assertIn("CM-XXX", cm_instructions)
+
+    def test_clarification_questions_template(self):
+        self.assertIsNotNone(CLARIFICATION_QUESTIONS_TEMPLATE)
+        self.assertIsInstance(CLARIFICATION_QUESTIONS_TEMPLATE, str)
+        self.assertTrue(len(CLARIFICATION_QUESTIONS_TEMPLATE) > 0)
+        self.assertIn("{{current_project_summary}}", CLARIFICATION_QUESTIONS_TEMPLATE)
+        self.assertIn("{{latest_user_utterance}}", CLARIFICATION_QUESTIONS_TEMPLATE)
+        self.assertIn("NO_QUESTIONS_NEEDED", CLARIFICATION_QUESTIONS_TEMPLATE)
+        self.assertIn("1 to 3 specific", CLARIFICATION_QUESTIONS_TEMPLATE) # "1-3 specific" was in spec, "1 to 3" in prompt
+        self.assertIn("open-ended questions", CLARIFICATION_QUESTIONS_TEMPLATE)
+        self.assertIn("Output *only* the questions, as a numbered list.", CLARIFICATION_QUESTIONS_TEMPLATE)
+
+    def test_refine_understanding_template(self):
+        self.assertIsNotNone(REFINE_UNDERSTANDING_TEMPLATE)
+        self.assertIsInstance(REFINE_UNDERSTANDING_TEMPLATE, str)
+        self.assertTrue(len(REFINE_UNDERSTANDING_TEMPLATE) > 0)
+        self.assertIn("{{current_project_summary}}", REFINE_UNDERSTANDING_TEMPLATE)
+        self.assertIn("{{questions_that_were_asked}}", REFINE_UNDERSTANDING_TEMPLATE)
+        self.assertIn("{{user_answers}}", REFINE_UNDERSTANDING_TEMPLATE)
+        self.assertIn("revised project summary", REFINE_UNDERSTANDING_TEMPLATE) # Keyword in the descriptive text
+        self.assertIn("synthesize information", REFINE_UNDERSTANDING_TEMPLATE) # "synthesize" was in spec
+        self.assertIn("coherent project summary", REFINE_UNDERSTANDING_TEMPLATE) # "coherent" was in spec
+        self.assertIn("Output *only* the revised project summary text.", REFINE_UNDERSTANDING_TEMPLATE)
 
 
 if __name__ == '__main__':
