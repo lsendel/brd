@@ -235,7 +235,7 @@ class TestPersistence(unittest.TestCase):
         self.assertEqual(message.content, f"Unknown message type stored: {str(unknown_message_dict)}")
 
         # Check if the warning was printed
-        mock_print.assert_any_call(f"Warning: Unknown or missing message type 'future_message_type' in stored message: {unknown_message_dict}. Falling back to AIMessage.")
+        mock_print.assert_any_call(f"WARNING: Unknown or missing message type 'future_message_type' in stored message: {unknown_message_dict}. Falling back to AIMessage.")
 
     def test_09_save_io_error(self):
         """Test save_project under an IOError condition."""

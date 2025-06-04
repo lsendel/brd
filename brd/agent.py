@@ -1,7 +1,7 @@
 import os
 import json # Added for parsing JSON in get_clarification_questions
 import re
-from typing import List
+from typing import List, Optional
 
 import tenacity # Added for retries
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
@@ -21,14 +21,22 @@ from brd.prompts import (
 )
 
 # Initialize the LLM
-if not os.getenv("OPENAI_API_KEY"):
-    print("Warning: OPENAI_API_KEY not found in environment. LLM calls will fail.")
-
 # Global LLM instance, configured from environment variables.
 # It's initialized once when the module is loaded.
-llm: ChatOpenAI | None = None
+llm: Optional[ChatOpenAI] = None
 
-if os.getenv("OPENAI_API_KEY"):
+def initialize_llm() -> Optional[ChatOpenAI]:
+    """Initialize the LLM with environment variables, handling potential errors."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("WARNING: OPENAI_API_KEY not found in environment. LLM calls will fail.")
+        return None
+
+    # Check for dummy test keys
+    if api_key.startswith("dummy_") or api_key == "test_key":
+        print(f"WARNING: Detected dummy API key '{api_key}'. LLM will not be functional in tests.")
+        return None
+
     model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-3.5-turbo")
     temperature_str = os.getenv("OPENAI_TEMPERATURE", "0.7")
     try:
@@ -37,10 +45,19 @@ if os.getenv("OPENAI_API_KEY"):
         print(f"WARNING: Invalid OPENAI_TEMPERATURE value '{temperature_str}'. Defaulting to 0.7.")
         temperature = 0.7
 
-    llm = ChatOpenAI(model=model_name, temperature=temperature)
-    print(f"INFO: LLM initialized with model: {model_name}, temperature: {temperature}.")
-else:
-    print("WARNING: OPENAI_API_KEY not found. LLM (StrataBRD Pro agent) will not be functional.")
+    try:
+        llm_instance = ChatOpenAI(model=model_name, temperature=temperature)
+        print(f"INFO: LLM initialized with model: {model_name}, temperature: {temperature}.")
+        return llm_instance
+    except (AuthenticationError, APIError) as e:
+        print(f"ERROR: Failed to initialize LLM. {type(e).__name__}: {e}")
+        return None
+    except Exception as e:
+        print(f"ERROR: Unexpected error initializing LLM. {type(e).__name__}: {e}")
+        return None
+
+# Initialize the LLM
+llm = initialize_llm()
 
 # Note: Consider adding retry logic (e.g., using 'tenacity') for LLM calls
 #       in a production setting to handle transient network issues.
@@ -48,7 +65,8 @@ else:
 @retry(
     wait=wait_exponential(multiplier=1, min=2, max=60), # Exponential backoff starting at 2s, max 60s
     stop=stop_after_attempt(5), # Retry up to 5 times
-    retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError, APIError)) # Retry on these specific OpenAI errors
+    retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError)), # Retry on these specific OpenAI errors
+    reraise=True # Re-raise the last exception to be caught by the function's try/except
 )
 def generate_initial_brd_sections(user_input: str) -> str:
     """
@@ -128,7 +146,8 @@ If LLM were available, it would attempt to generate sections like:
 @retry(
     wait=wait_exponential(multiplier=1, min=2, max=60),
     stop=stop_after_attempt(5),
-    retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError, APIError))
+    retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError)),
+    reraise=True
 )
 def get_clarification_questions(current_project_summary: str, latest_user_utterance: str) -> List[str]:
     """
@@ -137,11 +156,8 @@ def get_clarification_questions(current_project_summary: str, latest_user_uttera
     Returns a list of questions or an empty list if no questions are needed.
     """
     if not llm:
-        print("ERROR: LLM not available (OPENAI_API_KEY missing). Cannot generate clarification questions.")
-        # Return a default question or empty list if no LLM.
-        # For now, returning an empty list and a message indicating the issue for the state.
-        # It might be better for the graph to know this explicitly.
-        # For now, the calling node should check if messages were added.
+        print("ERROR: LLM not available (OPENAI_API_KEY missing or invalid). Cannot generate clarification questions.")
+        # Return a message indicating the issue for the state.
         return ["LLM_UNAVAILABLE: Could not generate clarification questions due to missing API key."]
 
     print(f"--- Calling LLM for Clarification Questions. Summary: '{current_project_summary[:100]}...', Utterance: '{latest_user_utterance[:100]}...' ---")
@@ -222,7 +238,7 @@ def get_clarification_questions(current_project_summary: str, latest_user_uttera
     except APIError as e:
         error_type = type(e).__name__
         print(f"ERROR: OpenAI APIError ({error_type}) during clarification questions: {e}.")
-        return [f"LLM_API_ERROR: {error_type}. Could not get clarification questions."]
+        return ["LLM_API_ERROR: APIError. Could not get clarification questions."]
     except Exception as e:
         error_type = type(e).__name__
         module = getattr(type(e), '__module__', '')
@@ -233,7 +249,8 @@ def get_clarification_questions(current_project_summary: str, latest_user_uttera
 @retry(
     wait=wait_exponential(multiplier=1, min=2, max=60),
     stop=stop_after_attempt(5),
-    retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError, APIError))
+    retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError)),
+    reraise=True
 )
 def refine_project_understanding(current_summary: str, questions_asked: List[str], user_answers: str) -> str:
     """
@@ -242,7 +259,7 @@ def refine_project_understanding(current_summary: str, questions_asked: List[str
     Returns the revised project summary.
     """
     if not llm:
-        print("ERROR: LLM not available (OPENAI_API_KEY missing). Cannot refine project understanding.")
+        print("ERROR: LLM not available (OPENAI_API_KEY missing or invalid). Cannot refine project understanding.")
         # Return the original summary appended with an error message.
         return f"{current_summary}\n\n[LLM_UNAVAILABLE: Could not refine project understanding due to missing API key. The above understanding is based on previous information only.]"
 
@@ -289,7 +306,7 @@ def refine_project_understanding(current_summary: str, questions_asked: List[str
     except APIError as e: # Catch other/general OpenAI API errors
         error_type = type(e).__name__
         print(f"ERROR: OpenAI APIError ({error_type}) during understanding refinement: {e}.")
-        return f"{current_summary}\n\n[LLM_API_ERROR: {error_type}. Could not refine project understanding.]"
+        return f"{current_summary}\n\n[LLM_API_ERROR: APIError. Could not refine project understanding.]"
     except Exception as e: # Catch other unexpected errors
         error_type = type(e).__name__
         module = getattr(type(e), '__module__', '')
