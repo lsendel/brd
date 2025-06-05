@@ -1,4 +1,5 @@
 import os
+import dotenv # Import the dotenv module
 # os import was already there # This comment is now redundant
 from brd.graph import create_graph
 from brd.agent_state import AgentState
@@ -18,20 +19,6 @@ from brd.project_manager import (
     generate_unique_project_id,
     create_new_project_core_logic
 )
-
-# Attempt to load .env file for local development
-try:
-    import dotenv
-    if os.path.exists(".env"):
-        dotenv.load_dotenv(override=False)  # Load environment variables from .env file
-        if os.getenv("OPENAI_API_KEY"):
-            print("INFO: Loaded environment variables from .env file (if present and not already set).")
-        else:
-            print("INFO: .env file found but contains no relevant environment variables. Relying on globally set environment variables.")
-    else:
-        print("INFO: No .env file found. Relying on globally set environment variables.")
-except ImportError:
-    print("INFO: python-dotenv not installed. .env file will not be loaded. Ensure OPENAI_API_KEY and other required variables are set globally if needed.")
 
 
 def get_user_choice(prompt_message: str, valid_choices: list | None = None) -> str:
