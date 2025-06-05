@@ -78,8 +78,16 @@ def main():
         print("OPENAI_API_KEY='your_actual_api_key'")
         print("=" * 60 + "\n")
 
-        user_choice_continue = 'y' # Automatically proceed without API key for testing
-        if user_choice_continue == 'n' or user_choice_continue == 'exit':
+        user_choice_continue = get_user_choice(
+            "CRITICAL WARNING: OPENAI_API_KEY environment variable not found!\n"
+            "The agent will NOT be able to communicate with the OpenAI API.\n"
+            "Please set it up immediately. You can create a '.env' file in the\n"
+            "project root with the following content (replace with your actual key):\n"
+            "OPENAI_API_KEY='your_actual_api_key'\n\n"
+            "Do you want to continue without the API key? (Y/N): ",
+            ['y', 'n', 'yes', 'no']  # get_user_choice ensures one of these or 'exit'
+        )
+        if user_choice_continue == 'n' or user_choice_continue == 'no' or user_choice_continue == 'exit':
             print("Exiting. Please configure the OPENAI_API_KEY.")
             return
         print("WARNING: Continuing without API key. Expect errors related to OpenAI API calls.")
